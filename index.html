@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f5f6f2" />
+  <meta name="webscanner-version" content="117" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Web Scanner" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+  <title>Web Barcode Scanner</title>
+  <link rel="preload" href="js/app.bundle.js?v=117" as="script" />
+  <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
+       round-trips for the above-the-fold shell (base + scanner + layout +
+       essential components). The remaining interface styles load as one small sheet below. -->
+  <style>
+    /* ── base.css ─────────────────────────────────────────────────────────── */
+    :root {
+      --bg: #f3efe7;
+      --panel: rgba(255, 252, 247, 0.93);
+      --panel-line: rgba(20, 28, 36, 0.1);
+      --text: #18212a;
+      --muted: #667483;
+      --accent: #bf5a31;
+      --accent-strong: #a34a26;
+      --surface: #0f161e;
+      --success: #136f63;
+      --danger: #9c3041;
+      --shadow: 0 22px 50px rgba(18, 24, 31, 0.14);
+      --radius-xl: 22px;
+      --radius-lg: 18px;
+      --radius-md: 12px;
+      --radius-sm: 10px;
+      --font: "Aptos", "Segoe UI", sans-serif;
+      --control-square-size: 42px;
+    }
+    .app-update-notice {
+      position: fixed; bottom: max(12px, env(safe-area-inset-bottom));
+      left: 50%; transform: translateX(-50%); z-index: 60;
+      display: flex; align-items: center; gap: 12px;
+      padding: 8px 12px; border-radius: 12px; background: var(--panel);
+      border: 1px solid var(--panel-line); box-shadow: var(--shadow);
+      font-size: .8rem; white-space: nowrap;
+    }
+    .app-update-notice[hidden] { display: none; }
+    .app-update-notice .btn { min-height: 30px; padding: 5px 12px; }
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: var(--font);
+      background:
+        radial-gradient(circle at top left, rgba(191, 90, 49, 0.18), transparent 28%),
+        radial-gradient(circle at top right, rgba(19, 111, 99, 0.14), transparent 24%),
+        linear-gradient(180deg, #fbf8f2 0%, var(--bg) 100%);
+    }
+    .app-shell {
+      width: min(820px, calc(100% - 24px));
+      margin: 0 auto;
+      padding: max(6px, env(safe-area-inset-top)) 0 max(16px, env(safe-area-inset-bottom));
+    }
+    .card, .dialog-card {
+      background: var(--panel);
+      border: 1px solid var(--panel-line);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+    }
+    .card { padding: 4px 6px 6px; }
+    h2 { margin: 0; letter-spacing: -0.04em; font-size: 0.96rem; line-height: 1.1; }
+
+    /* ── scanner.css ──────────────────────────────────────────────────────── */
+    .top-status {
+      position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+      z-index: 6; display: inline-flex; max-width: calc(100% - 24px);
+      padding: 5px 10px; border-radius: 999px; background: transparent;
+      color: rgba(255,255,255,.75); font-size: .68rem; text-align: center;
+      text-shadow: 0 1px 3px rgba(0,0,0,.55); pointer-events: none;
+    }
+    .preview-frame {
+      position: relative; margin: 6px auto 0; width: 100%;
+      aspect-ratio: 20/9; overflow: hidden; border-radius: var(--radius-lg);
+      background: linear-gradient(180deg,rgba(6,10,14,.12),rgba(6,10,14,.45)), var(--surface);
+    }
+    #cameraPreview, #cameraPreviewQuagga, .preview-placeholder, .preview-grid, .scan-line {
+      position: absolute; inset: 0;
+    }
+    #cameraPreview, #cameraPreviewQuagga { width: 100%; height: 100%; display: block; background: #05080b; }
+    #cameraPreviewQuagga[hidden] { display: none !important; }
+    #cameraPreview, #cameraPreviewQuagga video, #cameraPreviewQuagga canvas {
+      width: 100% !important; height: 100% !important; object-fit: cover; display: block;
+    }
+    .preview-grid {
+      pointer-events: none;
+      background:
+        linear-gradient(rgba(255,255,255,.08) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.08) 1px, transparent 1px);
+      background-size: 22% 22%;
+      mask-image: linear-gradient(180deg, rgba(0,0,0,.72), transparent 85%);
+    }
+    .scan-window {
+      position: absolute; border: 2px solid rgba(255,255,255,.92); border-radius: 24px;
+      box-shadow: 0 0 0 999px rgba(6,10,14,.24); pointer-events: none; touch-action: none;
+    }
+    .roi-handle {
+      position: absolute; right: -12px; bottom: -12px; width: 32px; height: 32px;
+      border-radius: 50%; background: var(--accent, #bf5a31); border: 2.5px solid #fff;
+      box-shadow: 0 4px 12px rgba(0,0,0,.45); cursor: se-resize;
+      pointer-events: auto !important; touch-action: none; z-index: 10;
+      display: flex; align-items: center; justify-content: center;
+      transition: transform 120ms ease;
+    }
+    .roi-handle:active { transform: scale(1.2); background: var(--accent-strong, #a34a26); }
+    .roi-handle::after {
+      content: ""; width: 7px; height: 7px; border-right: 2px solid #fff;
+      border-bottom: 2px solid #fff; margin-top: -2px; margin-left: -2px;
+    }
+    .scan-line {
+      top: 14%; bottom: auto; height: 3px; left: 14%; right: 14%; border-radius: 999px;
+      background: linear-gradient(90deg, transparent, rgba(255,175,141,.96), transparent);
+      box-shadow: 0 0 18px rgba(255,146,92,.95); opacity: 0; transform: translateY(0);
+    }
+    .preview-frame.is-scanning .scan-line { opacity: 1; animation: scanMove 1.8s linear infinite; }
+    @keyframes scanMove { 0%{transform:translateY(0)} 50%{transform:translateY(56vw)} 100%{transform:translateY(0)} }
+    .preview-placeholder {
+      display: grid; place-items: center; padding: 16px; text-align: center;
+      color: rgba(255,255,255,.9);
+      background: linear-gradient(180deg, rgba(10,16,22,.16), rgba(10,16,22,.78));
+      font-size: .82rem;
+    }
+    .preview-placeholder[hidden] { display: none; }
+    .preview-meta {
+      position: absolute; top: 14px; left: 14px; right: 14px;
+      display: flex; justify-content: space-between; gap: 12px; pointer-events: none;
+    }
+    .api-loader {
+      position: absolute; left: 14px; bottom: 14px; width: 22px; height: 22px;
+      border-radius: 50%; border: 3px solid rgba(255,255,255,.28); border-top-color: #fff;
+      opacity: 0; pointer-events: none; transition: opacity 160ms ease; z-index: 6;
+    }
+    .api-loader.is-visible { opacity: 1; animation: api-loader-spin 700ms linear infinite; }
+    @keyframes api-loader-spin { to { transform: rotate(360deg); } }
+    #searchBarcodeBtn { position: relative; }
+    #searchBarcodeBtn[aria-busy="true"] { color: transparent; }
+    #searchBarcodeBtn[aria-busy="true"]::after {
+      content: ""; position: absolute; top: 50%; left: 50%;
+      width: 20px; height: 20px; margin: -10px 0 0 -10px;
+      border: 2px solid var(--panel-line); border-top-color: var(--accent);
+      border-radius: 50%; animation: api-loader-spin 700ms linear infinite;
+    }
+    .badge, .mini-pill { padding: 5px 9px; border-radius: 999px; font-size: .72rem; }
+    .badge { background: rgba(8,12,16,.58); color: #fff; backdrop-filter: blur(12px); }
+
+    /* ── layout.css ───────────────────────────────────────────────────────── */
+    .controls, .lookup-row, .field-grid, .helper-row, .dialog-actions, .field-list, .history-list {
+      display: grid; gap: 12px;
+    }
+    .controls { margin-top: 10px; }
+    .controls.top-tools { margin-top: 2px; }
+    .history-list.is-locked-scroll {
+      max-height: 55vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain; padding-right: 4px; padding-bottom: 260px;
+      touch-action: pan-y; scroll-padding-bottom: 260px;
+    }
+    .top-tools { grid-template-columns: 1fr; }
+    .button-row { grid-template-columns: 1fr; }
+    .lookup-row { grid-template-columns: minmax(0,1fr) 88px 88px; }
+    .input-mode-switch {
+      display: flex; padding: 3px; border-radius: 999px;
+      background: rgba(20,28,36,.06); gap: 3px;
+    }
+    .input-mode-option {
+      flex: 1; border: none; background: transparent; color: var(--muted);
+      font-weight: 700; font-size: .76rem; padding: 7px 0; border-radius: 999px;
+      cursor: pointer; transition: background 150ms ease, color 150ms ease;
+    }
+    .input-mode-option[aria-pressed="true"] {
+      background: var(--panel); color: var(--text);
+      box-shadow: 0 1px 4px rgba(18,24,31,.16);
+    }
+    body.mode-scanner .preview-frame, body.mode-scanner .scan-actions, body.mode-scanner #torchBtn {
+      display: none !important;
+    }
+    .field-grid { grid-template-columns: repeat(6,minmax(0,1fr)); margin-top: 10px; }
+    .span-half { grid-column: span 3; }
+    .span-full { grid-column: 1/-1; }
+    .span-third { grid-column: span 2; }
+    .pi-slider {
+      margin-top: 10px; overflow-x: auto; overflow-y: hidden;
+      scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch;
+      scrollbar-width: none; touch-action: pan-x;
+    }
+    .pi-slider::-webkit-scrollbar { display: none; }
+    .pi-track { display: flex; }
+    .pi-slide { flex: 0 0 100%; scroll-snap-align: start; scroll-snap-stop: always; min-width: 100%; }
+    .pi-row { display: flex; gap: 12px; }
+    .pi-row + .pi-row { margin-top: 12px; }
+    .pi-row .field-card { min-width: 0; }
+    .pi-w-60 { width: 60%; } .pi-w-40 { width: 40%; } .pi-w-70 { width: 70%; }
+    .pi-w-30 { width: 30%; } .pi-w-50 { width: 50%; } .pi-w-33 { flex: 1 1 0; }
+    .sales-summary-row #field_create_time_card { flex: 1.15 1 0; }
+    .sales-summary-row #field_sales_quantity_card { flex: 0.85 1 0; }
+    .sales-summary-row #field_create_time { white-space: nowrap; }
+    .sales-period-btn {
+      flex: 0 0 72px; width: 72px; min-width: 72px; align-self: stretch;
+      padding: 0 8px; font-size: .7rem;
+    }
+    .sales-period-btn.has-period {
+      color: #fff7f2; background: #136f63; border-color: #136f63;
+    }
+    .pi-dots { display: flex; justify-content: center; align-items: center; gap: 5px; margin-top: 4px; line-height: 0; position: relative; z-index: 1; }
+    .pi-dot {
+      width: 34px; height: 5px; padding: 0; border: none; background: transparent;
+      cursor: pointer; position: relative; touch-action: manipulation;
+    }
+    .pi-dot::before {
+      content: ""; position: absolute; left: 50%; top: 0; width: 5px; height: 5px;
+      border-radius: 50%; background: rgba(20,28,36,.18);
+      transform: translateX(-50%); transition: background 160ms ease, transform 160ms ease;
+    }
+    .pi-dot::after { content: ""; position: absolute; inset: -14px 0; }
+    .pi-dot.is-active::before { background: var(--accent); transform: translateX(-50%) scale(1.25); }
+    .helper-row {
+      grid-template-columns: var(--control-square-size) minmax(0,1fr) minmax(0,1fr) var(--control-square-size);
+      align-items: stretch; margin-top: 8px; column-gap: 8px; row-gap: 0;
+    }
+    #scanBtn { grid-column: 3/-1; }
+    .scan-actions { display: contents; }
+    .manual-entry-group { display: contents; }
+    .manual-entry-group > * { min-width: 0; }
+    .manual-entry-lock, .manual-entry-qty, .manual-entry-add { position: relative; z-index: 0; }
+    .manual-entry-lock {
+      border-top-right-radius: 0; border-bottom-right-radius: 0; padding: 0;
+      display: grid; place-items: center;
+      width: var(--control-square-size); min-width: var(--control-square-size);
+      max-width: var(--control-square-size); min-height: var(--control-square-size);
+      height: var(--control-square-size);
+    }
+    .manual-entry-lock svg { width: 18px; height: 18px; }
+    .manual-entry-qty {
+      border-top-right-radius: var(--radius-md); border-bottom-right-radius: var(--radius-md);
+      border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 0;
+      text-align: center; font-weight: 700; min-height: var(--control-square-size);
+    }
+    .manual-entry-qty.is-locked {
+      opacity: 1; background: rgba(246,240,231,.96); color: var(--text); pointer-events: none;
+    }
+    .price-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 5px; }
+    .price-card-heading label { margin-bottom: 0; }
+    .btn.history-details-switch { display: grid; place-items: center; padding: 0; min-height: 20px; height: 20px; width: 36px; flex: 0 0 36px; border-radius: 999px; }
+    .history-details-switch-track { display: block; width: 30px; height: 18px; border-radius: 999px; background: rgba(20,28,36,.22); padding: 2px; box-sizing: border-box; }
+    .history-details-switch-thumb { display: block; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform 150ms ease; }
+    .history-details-switch[aria-checked="true"] .history-details-switch-track { background: rgba(255,255,255,.35); }
+    .history-details-switch[aria-checked="true"] .history-details-switch-thumb { transform: translateX(12px); }
+    .manual-entry-add { display: none; }
+    .floating-action-btn {
+      position: fixed; top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right));
+      z-index: 18; width: 42px; min-width: 42px; height: 42px; max-width: 42px; padding: 0;
+      border-radius: 999px; display: grid; place-items: center; flex: 0 0 42px;
+      background: #101720; border: 1px solid #101720;
+      box-shadow: 0 14px 28px rgba(17,24,31,.18); backdrop-filter: blur(10px);
+      transition: box-shadow 150ms ease;
+    }
+    .btn.floating-action-btn { width: 42px; min-height: 42px; border-radius: 999px; }
+    .floating-action-btn:disabled { opacity: .88; }
+    .floating-action-btn svg { width: 18px; height: 18px; color: #c8ced5; transition: color 150ms ease; }
+    .floating-action-btn.is-on svg, .floating-action-btn.torch-on svg { color: #000; }
+    .floating-refresh-btn { top: calc(max(16px, env(safe-area-inset-top)) + 50px); }
+    .floating-lock-scroll-btn { top: calc(max(16px, env(safe-area-inset-top)) + 100px); }
+    .floating-lock-scroll-btn.is-on svg { color: #000; }
+    body.is-scroll-locked {
+      position: fixed; left: 0; right: 0; width: 100%;
+      overflow: hidden; touch-action: none; overscroll-behavior: none;
+    }
+    .dialog-actions { grid-template-columns: repeat(auto-fit,minmax(110px,1fr)); margin-top: 16px; }
+    button, select, input, textarea { font: inherit; touch-action: manipulation; }
+
+    /* ── components.css (critical subset) ────────────────────────────────── */
+    .btn, .input, .select {
+      min-height: var(--control-square-size); border-radius: var(--radius-md);
+      border: 1px solid transparent; width: 100%;
+    }
+    .btn {
+      cursor: pointer; padding: 0 10px; font-weight: 700;
+      transition: transform 150ms ease, opacity 150ms ease; font-size: .82rem;
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn:disabled, .input:disabled, .select:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+    .btn-primary {
+      color: #fff7f2;
+      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      box-shadow: 0 16px 28px rgba(191,90,49,.22);
+    }
+    .btn-primary[data-mode="stop"] {
+      background: linear-gradient(135deg, #7d2431, #9f3343);
+      box-shadow: 0 16px 28px rgba(125,36,49,.18);
+    }
+    .btn-muted, .select {
+      color: var(--text); background: rgba(20,28,36,.06); border-color: rgba(20,28,36,.08);
+    }
+    #cameraSelect { font-size: .72rem; }
+    .input, .textarea {
+      padding: 9px 10px; border-color: rgba(20,28,36,.12);
+      background: rgba(255,255,255,.96); color: var(--text); font-size: .84rem;
+    }
+    .textarea { min-height: 96px; resize: vertical; }
+    .input:focus, .select:focus, .textarea:focus { outline: 2px solid rgba(191,90,49,.28); outline-offset: 1px; }
+    .mini-pill { background: rgba(20,28,36,.05); color: var(--muted); text-align: center; }
+    .section-card { margin-top: 10px; }
+    .field-card {
+      padding: 4.5px 8px; border-radius: var(--radius-md);
+      background: rgba(255,255,255,.68); border: 1px solid rgba(20,28,36,.08);
+    }
+    .field-card label {
+      display: block; color: var(--muted); font-size: .62rem; margin-bottom: 5px;
+      text-transform: uppercase; letter-spacing: .06em;
+    }
+    .field-value { font-size: .8rem; font-weight: 700; line-height: 1.28; word-break: break-word; min-height: 1.25em; }
+    .sales-field-value { display: flex; align-items: center; gap: 6px; min-height: 1.25em; }
+    .sales-loader {
+      width: 14px; height: 14px; border-radius: 50%;
+      border: 2px solid rgba(20,28,36,.14); border-top-color: var(--accent);
+      animation: api-loader-spin 700ms linear infinite;
+    }
+    .sales-loader[hidden] { display: none; }
+    .activity-slide { position: relative; }
+    .activity-loader { position: absolute; top: 22px; right: 10px; width: 12px; height: 12px; }
+    .activity-row + .activity-row { margin-top: 12px; }
+    .activity-periods { display: grid; grid-template-columns: minmax(0, 1.2fr) repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .activity-periods label { font-size: .58rem; letter-spacing: 0; text-transform: none; white-space: nowrap; }
+    .activity-error { position: absolute; inset: 0; margin: 0; padding: 5px 8px 36px; overflow: auto; background: var(--panel); color: var(--danger); font-size: .75rem; }
+    .activity-retry[hidden], .activity-error[hidden] { display: none; }
+    .activity-retry { position: absolute; bottom: 0; right: 8px; padding: 4px 12px; min-height: 28px; }
+    .field-card[hidden] { display: none; }
+    .field-value.is-discount { color: #b42318; font-weight: 800; }
+    #field_disc_cost, #field_disc_iva, #field_discount_percent { color: var(--text); font-weight: 700; }
+
+    .sales-period-dialog-card { display: grid; gap: 12px; align-content: start; }
+    .sales-period-grid { display: grid; gap: 10px; }
+    .sales-period-shortcuts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+    .sales-period-shortcuts .btn { min-width: 0; padding: 0 4px; font-size: .72rem; }
+    .sales-period-status { color: var(--danger); }
+
+    /* ── visually-hidden utility (used throughout) ────────────────────────── */
+    .visually-hidden {
+      position: absolute !important; width: 1px !important; height: 1px !important;
+      padding: 0 !important; margin: -1px !important; overflow: hidden !important;
+      clip: rect(0,0,0,0) !important; white-space: nowrap !important; border: 0 !important;
+    }
+
+    /* ── toast (needed before any deferred CSS loads) ─────────────────────── */
+    .toast {
+      position: fixed; bottom: max(24px,env(safe-area-inset-bottom)); left: 50%;
+      transform: translateX(-50%) translateY(80px); z-index: 100;
+      padding: 10px 20px; border-radius: 999px; font-size: .82rem; font-weight: 700;
+      background: #18212a; color: #fff; pointer-events: none;
+      opacity: 0; transition: opacity 200ms ease, transform 200ms ease;
+      white-space: nowrap; max-width: calc(100vw - 48px); text-align: center;
+    }
+    .toast.is-visible { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* ── FAB ─────────────────────────────────────────────────────────────── */
+    .fab {
+      position: fixed; bottom: max(24px,env(safe-area-inset-bottom));
+      right: max(20px,env(safe-area-inset-right)); z-index: 18;
+      width: 52px; height: 52px; border-radius: 50%;
+      display: grid; place-items: center; padding: 0;
+      background: linear-gradient(135deg,var(--accent),var(--accent-strong));
+      border: none; box-shadow: 0 14px 30px rgba(191,90,49,.32);
+      cursor: pointer; transition: box-shadow 150ms ease, transform 150ms ease;
+    }
+    .fab:hover { transform: scale(1.06); }
+    .fab svg { width: 22px; height: 22px; color: #fff; }
+    /* 16px controls prevent iOS focus zoom; manual pinch zoom stays available. */
+    @media (pointer: coarse) {
+      input.input, textarea.textarea, select.select, #cameraSelect { font-size: 16px; }
+    }
+    html { overflow-anchor: none; }
+  </style>
+
+  <!-- These sheets affect the visible page geometry. Keep them render-blocking so
+       browsers paint the completed interface once instead of restyling sections
+       progressively on a slow connection. -->
+
+  <link rel="stylesheet" href="css/interface.bundle.css?v=117" />
+</head>
+<body>
+  <main class="app-shell">
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4M3 16v4a1 1 0 0 0 1 1h4m8 0h4a1 1 0 0 0 1-1v-4M7 8v8m3-8v8m4-8v8m3-8v8"/></svg></span>
+        <div><h1>Web Scanner</h1><p>Capture. Check. Keep moving.</p></div>
+      </div>
+      <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
+    <span class="visually-hidden">Refresh login</span>
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 12a9 9 0 1 1-2.64-6.36"></path>
+      <path d="M21 3v6h-6"></path>
+    </svg>
+  </button><button class="btn btn-muted floating-action-btn floating-lock-scroll-btn" id="lockscreenscroll" type="button" aria-label="Lock screen scroll" title="Lock screen scroll" aria-pressed="false">
+    <span class="visually-hidden">Lock screen scroll</span>
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="5" y="11" width="14" height="10" rx="2"></rect>
+      <path d="M8 11V7a4 4 0 0 1 8 0v4"></path>
+    </svg>
+  </button><button class="fab" id="settingsBtn" type="button" aria-label="Open settings">
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3.2"></circle>
+      <path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a2 2 0 0 1 0 2.8 2 2 0 0 1-2.8 0l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a2 2 0 0 1-4 0v-.2a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a2 2 0 0 1-2.8 0 2 2 0 0 1 0-2.8l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4a2 2 0 0 1 0-4h.2a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a2 2 0 0 1 0-2.8 2 2 0 0 1 2.8 0l.1.1a1 1 0 0 0 1.1.2 1 1 0 0 0 .6-.9V4a2 2 0 0 1 4 0v.2a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a2 2 0 0 1 2.8 0 2 2 0 0 1 0 2.8l-.1.1a1 1 0 0 0-.2 1.1 1 1 0 0 0 .9.6H20a2 2 0 0 1 0 4h-.2a1 1 0 0 0-.9.6z"></path>
+    </svg>
+  </button></nav>
+    </header>
+
+    <section class="card">
+      <div class="section-heading">
+        <h2>Find a product</h2>
+        <div class="input-mode-switch" id="inputModeSwitch" role="group" aria-label="Input mode">
+          <button class="input-mode-option" type="button" data-input-mode="phone" aria-pressed="true">Camera</button>
+          <button class="input-mode-option" type="button" data-input-mode="scanner" aria-pressed="false">Scanner</button>
+        </div>
+      </div>
+      <p class="entry-description">Capture a barcode or enter its number below.</p>
+      <div class="controls">
+        <div class="lookup-row">
+          <input class="input" id="barcodeInput" type="text" inputmode="numeric" autocomplete="off" placeholder="Enter barcode" aria-label="Barcode" value="" />
+          <button class="btn btn-muted" id="searchBarcodeBtn" type="button">Search</button>
+          <button class="btn btn-muted" id="clearBarcodeBtn" type="button">Clear</button>
+        </div>
+      </div>
+
+      <div class="helper-row">
+        <div class="manual-entry-group">
+          <button class="btn btn-muted manual-entry-lock" id="entryModeBtn" type="button" aria-label="Locked barcode entry" title="Locked barcode entry">
+            <svg id="entryModeIcon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="5" y="11" width="14" height="10" rx="2"></rect>
+              <path d="M8 11V8a4 4 0 1 1 8 0v3"></path>
+            </svg>
+          </button>
+          <input class="input manual-entry-qty" id="quantityInput" type="number" inputmode="none" min="1" step="1" value="" placeholder="Qty" aria-label="Quantity" readonly disabled />
+          <button class="btn btn-primary manual-entry-add" id="addBarcodeBtn" type="button" hidden tabindex="-1" aria-hidden="true" disabled>Add</button>
+        </div>
+        <div class="scan-actions">
+          <button class="btn btn-primary" id="scanBtn" type="button" data-mode="start">Capture barcode</button>
+        </div>
+      </div>
+      <div class="status-row">
+        <span class="status-dot" aria-hidden="true"></span>
+        <div id="statusText" role="status">Ready to capture</div>
+        <div class="api-loader" id="apiLoader" aria-hidden="true"></div>
+      </div>
+    </section>
+
+    <section class="card section-card" id="productInfoSection">
+      <div class="section-heading"><h2 id="productInfoTitle">Product details</h2><span class="section-kicker">Latest capture</span></div>
+      <div class="pi-slider" id="productInfoSlider">
+        <div class="pi-track" id="productInfoTrack">
+          <div class="pi-slide" data-slide-index="0">
+            <div class="pi-row">
+              <div class="field-card pi-w-60" id="field_goods_code_card"><label for="field_goods_code">Goods Code</label><div class="field-value" id="field_goods_code"></div></div>
+              <div class="field-card pi-w-40" id="field_real_inventory_card"><label for="field_real_inventory">Inventory</label><div class="field-value" id="field_real_inventory"></div></div>
+            </div>
+            <div class="pi-row">
+              <div class="field-card pi-w-33" id="field_s_price_card"><div class="price-card-heading"><label for="field_s_price">Price</label><button class="btn btn-muted history-details-switch" id="historyDetailsSwitch" type="button" role="switch" aria-checked="false" aria-label="Show cost and supplier in history" title="Show cost and supplier in history"><span class="history-details-switch-track" aria-hidden="true"><span class="history-details-switch-thumb"></span></span></button></div><div class="field-value" id="field_s_price"></div></div>
+              <div class="field-card pi-w-33" id="field_discount_price_card" hidden><label for="field_discount_price">Disc. Price</label><div class="field-value is-discount" id="field_discount_price"></div></div>
+              <div class="field-card pi-w-33" id="field_disc_price_percent_card" hidden><label for="field_disc_price_percent">D. Price%</label><div class="field-value is-discount" id="field_disc_price_percent"></div></div>
+            </div>
+          </div>
+          <div class="pi-slide" data-slide-index="1">
+            <div class="pi-row">
+              <div class="field-card pi-w-60" id="field_supplier_name_card"><label for="field_supplier_name">Supplier</label><div class="field-value" id="field_supplier_name"></div></div>
+              <div class="field-card pi-w-40" id="field_discount_percent_card"><label for="field_discount_percent">Discount%</label><div class="field-value is-discount" id="field_discount_percent"></div></div>
+            </div>
+            <div class="pi-row">
+              <div class="field-card pi-w-33" id="field_p_price_card"><label for="field_p_price">Cost</label><div class="field-value" id="field_p_price"></div></div>
+              <div class="field-card pi-w-33" id="field_disc_cost_card"><label for="field_disc_cost">Disc. Cost</label><div class="field-value is-discount" id="field_disc_cost"></div></div>
+              <div class="field-card pi-w-33" id="field_disc_iva_card"><label for="field_disc_iva">Disc + IVA</label><div class="field-value is-discount" id="field_disc_iva"></div></div>
+            </div>
+          </div>
+          <div class="pi-slide" data-slide-index="2">
+            <div class="pi-row">
+              <div class="field-card pi-w-70" id="field_italian_name_card"><label for="field_italian_name">Italian Name</label><div class="field-value" id="field_italian_name"></div></div>
+              <div class="field-card pi-w-30" id="field_spec_card"><label for="field_spec">Spec</label><div class="field-value" id="field_spec"></div></div>
+            </div>
+            <div class="pi-row sales-summary-row">
+              <div class="field-card pi-w-50" id="field_create_time_card"><label for="field_create_time">Saved</label><div class="field-value" id="field_create_time"></div></div>
+              <div class="field-card pi-w-33" id="field_sales_quantity_card"><label for="field_sales_quantity">Sales</label><div class="field-value sales-field-value"><span id="field_sales_quantity"></span><span class="sales-loader" id="salesQuantityLoader" hidden></span></div></div>
+              <button class="btn btn-muted sales-period-btn pi-w-17" id="salesPeriodBtn" type="button">Period</button>
+            </div>
+          </div>
+          <div class="pi-slide activity-slide" data-slide-index="3" id="productActivitySlide" role="tabpanel" aria-label="Sales and inventory" aria-busy="false">
+            <span class="sales-loader activity-loader" id="productActivityLoader" role="status" aria-label="Loading sales and inventory" hidden></span>
+            <div class="field-card activity-row">
+              <div class="activity-periods">
+                <div><label for="activitySalesToday"><strong>(sales)</strong> today</label><div class="field-value" id="activitySalesToday" data-activity-type="sales" data-period-index="0">—</div></div>
+                <div><label for="activitySales7">Last 7 days</label><div class="field-value" id="activitySales7" data-activity-type="sales" data-period-index="1">—</div></div>
+                <div><label for="activitySales30">Last 30 days</label><div class="field-value" id="activitySales30" data-activity-type="sales" data-period-index="2">—</div></div>
+                <div><label for="activitySales90">Last 90 days</label><div class="field-value" id="activitySales90" data-activity-type="sales" data-period-index="3">—</div></div>
+              </div>
+            </div>
+            <div class="field-card activity-row">
+              <div class="activity-periods">
+                <div><label for="activityInventoryToday"><strong>(insert)</strong> today</label><div class="field-value" id="activityInventoryToday" data-activity-type="inventory" data-period-index="0">—</div></div>
+                <div><label for="activityInventory7">Last 7 days</label><div class="field-value" id="activityInventory7" data-activity-type="inventory" data-period-index="1">—</div></div>
+                <div><label for="activityInventory30">Last 30 days</label><div class="field-value" id="activityInventory30" data-activity-type="inventory" data-period-index="2">—</div></div>
+                <div><label for="activityInventory90">Last 90 days</label><div class="field-value" id="activityInventory90" data-activity-type="inventory" data-period-index="3">—</div></div>
+              </div>
+            </div>
+            <p class="activity-error" id="productActivityStatus" role="status" hidden></p>
+            <button class="btn btn-muted activity-retry" id="productActivityRetryBtn" type="button" hidden>Retry</button>
+          </div>
+        </div>
+      </div>
+      <div class="pi-dots" id="productInfoDots" role="tablist" aria-label="Product info pages">
+        <button class="pi-dot" type="button" data-goto-slide="0" role="tab" aria-label="Page 1" aria-selected="true"></button>
+        <button class="pi-dot" type="button" data-goto-slide="1" role="tab" aria-label="Page 2" aria-selected="false"></button>
+        <button class="pi-dot" type="button" data-goto-slide="2" role="tab" aria-label="Page 3" aria-selected="false"></button>
+        <button class="pi-dot" type="button" data-goto-slide="3" role="tab" aria-label="Page 4: Sales and inventory" aria-controls="productActivitySlide" aria-selected="false"></button>
+      </div>
+      <div class="visually-hidden" aria-hidden="true">
+        <div class="field-card" id="field_supplier_name_compact_card" hidden><label for="field_supplier_name_compact">Supplier</label><div class="field-value" id="field_supplier_name_compact"></div></div>
+        <div class="field-card" id="field_id_card" hidden><label for="field_id">ID</label><div class="field-value" id="field_id"></div></div>
+      </div>
+    </section>
+
+    <section class="card section-card qty-pad-card" id="quantityPadCard" aria-label="Quantity keypad" hidden>
+      <div class="qty-pad-grid" id="quantityPad">
+        <button class="qty-pad-key" type="button" data-key="1">1</button>
+        <button class="qty-pad-key" type="button" data-key="2">2</button>
+        <button class="qty-pad-key" type="button" data-key="3">3</button>
+        <button class="qty-pad-key" type="button" data-key="backspace">Del</button>
+        <button class="qty-pad-key" type="button" data-key="4">4</button>
+        <button class="qty-pad-key" type="button" data-key="5">5</button>
+        <button class="qty-pad-key" type="button" data-key="6">6</button>
+        <button class="qty-pad-key" type="button" data-key="clear">C</button>
+        <button class="qty-pad-key" type="button" data-key="7">7</button>
+        <button class="qty-pad-key" type="button" data-key="8">8</button>
+        <button class="qty-pad-key" type="button" data-key="9">9</button>
+        <button class="qty-pad-key" type="button" data-key="0">0</button>
+        <button class="qty-pad-key" type="button" data-key="enter" style="grid-column: 1 / -1;">Enter / Add</button>
+      </div>
+    </section>
+
+    <section class="card section-card">
+      <div class="history-head">
+        <h2 id="historyTitle">Your scan list</h2>
+      </div>
+      <div class="history-actions">
+        <button class="btn btn-muted" id="clearSelectedBtn" type="button" disabled>Delete selected</button>
+        <button class="btn btn-muted" id="clearAllBtn" type="button">Clear list</button>
+        <div class="mini-pill" id="historyCountBadge" aria-live="polite">Count: 0</div>
+        <button class="btn btn-primary" id="printBtn" type="button">Print</button>
+      </div>
+      <div class="history-list" id="historyList" aria-live="polite">
+        <p class="history-empty" id="historyEmpty">Your list is ready. Capture your first barcode to get started.</p>
+      </div>
+    </section>
+  </main>
+
+  <section id="capturePage" class="capture-page" role="dialog" aria-modal="true" aria-labelledby="captureTitle" hidden>
+    <header class="capture-header">
+      <button id="captureBackBtn" class="btn capture-icon-btn" type="button" aria-label="Cancel capture and go back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></button>
+      <div><h2 id="captureTitle">Capture a barcode</h2><p>Point your camera at the label</p></div>
+      <button class="btn capture-icon-btn" id="torchBtn" type="button" aria-label="Toggle flashlight" disabled>
+    <span class="visually-hidden">Torch</span>
+    <svg id="torchIcon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="4"></circle>
+      <path d="M12 2.5v2.5"></path>
+      <path d="M12 19v2.5"></path>
+      <path d="M4.9 4.9l1.8 1.8"></path>
+      <path d="M17.3 17.3l1.8 1.8"></path>
+      <path d="M2.5 12H5"></path>
+      <path d="M19 12h2.5"></path>
+      <path d="M4.9 19.1l1.8-1.8"></path>
+      <path d="M17.3 6.7l1.8-1.8"></path>
+    </svg>
+  </button>
+    </header>
+      <div class="preview-frame" id="previewFrame">
+        <video id="cameraPreview" playsinline webkit-playsinline muted disablepictureinpicture></video>
+        <div id="cameraPreviewQuagga" hidden></div>
+        <div class="preview-grid" aria-hidden="true"></div>
+        <div class="scan-window" id="roiBox" style="left:10%;top:10%;width:80%;height:80%;" aria-hidden="true">
+          <div class="roi-handle" id="roiResizeHandle"></div>
+        </div>
+        <div class="scan-line" aria-hidden="true"></div>
+
+        <div class="preview-meta">
+          <div class="badge" id="cameraBadge">Preview off</div>
+          <div class="badge" id="resolutionBadge">0 x 0</div>
+        </div>
+
+
+        <div class="preview-placeholder" id="previewPlaceholder">Opening camera…</div>
+      </div>
+
+    <footer class="capture-footer">
+      <div id="captureStatus" role="status">Opening camera…</div>
+      <p>Hold steady. You’ll return automatically when it’s captured.</p>
+      <button id="captureRetryBtn" class="btn btn-primary" type="button" hidden>Try again</button>
+    </footer>
+  </section>
+
+
+  <div class="toast" id="toast" aria-live="polite"></div>
+
+  
+
+  
+
+  
+
+  
+
+  <div class="dialog-backdrop" id="settingsDialog" aria-hidden="true">
+    <div class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="settingsDialogTitle">
+      <h2 id="settingsDialogTitle">Settings</h2>
+      <p>Save your credentials on this device. The app can reuse them to refresh the cookie automatically before product requests.</p>
+      <div class="field-list">
+        <label id="cameraSelectWrap">
+          <span class="visually-hidden">Choose camera</span>
+          <select class="select" id="cameraSelect" disabled></select>
+        </label>
+        
+        <label>
+          <span class="visually-hidden">Shop key</span>
+          <input class="input" id="shopKeyInput" type="text" autocomplete="off" placeholder="Shop key" />
+        </label>
+        <label>
+          <span class="visually-hidden">Login</span>
+          <input class="input" id="loginInput" type="text" autocomplete="username" placeholder="Login" />
+        </label>
+        <label>
+          <span class="visually-hidden">Password</span>
+          <input class="input" id="passwordInput" type="password" autocomplete="current-password" placeholder="Password" />
+        </label>
+      </div>
+      <div class="save-note" id="settingsSaveNote" aria-live="polite"></div>
+      <div class="dialog-actions">
+        <button class="btn btn-primary" id="loginSettingsBtn" type="button">Login</button>
+        <button class="btn btn-muted" id="closeSettingsBtn" type="button">Back</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dialog-backdrop" id="confirmDialog" aria-hidden="true">
+    <div class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="confirmDialogTitle">
+      <h2 id="confirmDialogTitle">Confirm action</h2>
+      <p id="confirmDialogText" style="white-space: pre-line; max-height: 50vh; overflow-y: auto;">Are you sure?</p>
+      <div class="dialog-actions">
+        <button class="btn btn-primary" id="confirmDialogOkBtn" type="button">Confirm</button>
+        <button class="btn btn-muted" id="confirmDialogCancelBtn" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dialog-backdrop" id="printDialog" aria-hidden="true">
+    <div class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="printDialogTitle">
+      <h2 id="printDialogTitle">Print Format</h2>
+      <p>Choose the print destination and label size.</p>
+      <div class="print-field">
+        <label for="printTunnelSelect">Print destination</label>
+        <select class="select" id="printTunnelSelect">
+          <option value="gate1">Gate 1</option>
+          <option value="gate2">Gate 2</option>
+        </select>
+      </div>
+      <label class="print-timestamp-option" for="printTimestampCheckbox">
+        <input id="printTimestampCheckbox" type="checkbox" checked />
+        <span>Timestamp</span>
+      </label>
+      <div class="dialog-actions compact-print-actions">
+        <button class="btn btn-primary" id="printBigBtn" type="button">[BIG] 60*38</button>
+        <button class="btn btn-primary" id="printStickerBtn" type="button">[STICKER] 40*25</button>
+        <button class="btn btn-primary" id="sendTxtBtn" type="button">Send TXT</button>
+        <button class="btn btn-muted" id="printBackBtn" type="button">Back</button>
+      </div>
+      <section class="print-request-section" aria-labelledby="printRequestHistoryTitle">
+        <h3 id="printRequestHistoryTitle">Recent print requests</h3>
+        <div id="printRequestHistoryList" class="print-request-list" aria-live="polite"></div>
+      </section>
+    </div>
+  </div>
+
+  <div class="dialog-backdrop" id="printRequestDetailDialog" aria-hidden="true">
+    <div class="dialog-card print-request-detail-card" role="dialog" aria-modal="true" aria-labelledby="printRequestDetailTitle">
+      <h2 id="printRequestDetailTitle">Print request</h2>
+      <p id="printRequestDetailMeta" class="print-request-detail-meta"></p>
+      <div id="printRequestDetailItems" class="print-request-detail-items"></div>
+      <div class="print-request-options">
+        <label for="printRequestTunnelSelect">Print destination</label>
+        <select class="select" id="printRequestTunnelSelect">
+          <option value="gate1">Gate 1</option>
+          <option value="gate2">Gate 2</option>
+        </select>
+        <label class="print-timestamp-option" for="printRequestTimestampCheckbox">
+          <input id="printRequestTimestampCheckbox" type="checkbox" checked />
+          <span>Timestamp</span>
+        </label>
+      </div>
+      <p id="printRequestDetailStatus" class="print-request-detail-status" role="status" aria-live="polite"></p>
+      <div class="dialog-actions print-request-detail-actions">
+        <button class="btn btn-muted" id="printRequestCancelBtn" type="button">Cancel</button>
+        <button class="btn btn-primary" id="printRequestTxtBtn" type="button">TXT</button>
+        <button class="btn btn-primary" id="printRequestBigBtn" type="button">60*38</button>
+        <button class="btn btn-primary" id="printRequestStickerBtn" type="button">40*25</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dialog-backdrop" id="salesPeriodDialog" aria-hidden="true">
+    <div class="dialog-card sales-period-dialog-card" role="dialog" aria-modal="true" aria-labelledby="salesPeriodTitle">
+      <h2 id="salesPeriodTitle">Sales Period</h2>
+      <div class="sales-period-grid">
+        <label class="detail-popup-field">
+          <span>Start</span>
+          <input class="input" id="salesPeriodStartInput" type="date" />
+        </label>
+        <label class="detail-popup-field">
+          <span>End</span>
+          <input class="input" id="salesPeriodEndInput" type="date" />
+        </label>
+      </div>
+      <div class="sales-period-shortcuts" role="group" aria-label="Quick sales periods">
+        <button class="btn btn-muted" type="button" data-sales-period-preset="this-month">This month</button>
+        <button class="btn btn-muted" type="button" data-sales-period-preset="last-3-months">Last 3 months</button>
+        <button class="btn btn-muted" type="button" data-sales-period-preset="this-year">This year</button>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn btn-primary" id="salesPeriodApplyBtn" type="button">Apply</button>
+        <button class="btn btn-muted" id="salesPeriodAllBtn" type="button">All</button>
+        <button class="btn btn-muted" id="salesPeriodBackBtn" type="button">Back</button>
+      </div>
+      <div class="save-note sales-period-status" id="salesPeriodStatus" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <div class="dialog-backdrop" id="closestSearchDialog" aria-hidden="true">
+    <div class="dialog-card closest-search-dialog-card" role="dialog" aria-modal="true" aria-labelledby="closestSearchTitle">
+      <h2 id="closestSearchTitle">Closest Matches</h2>
+      <div class="closest-search-progress" id="closestSearchProgress" role="status" aria-live="polite" hidden>
+        <span class="closest-search-loader" aria-hidden="true"></span>
+        <span>Waiting for response...</span>
+      </div>
+      <p class="closest-search-status" id="closestSearchStatus"></p>
+      <div class="history-list closest-search-results" id="closestSearchList" aria-live="polite">
+        <p class="history-empty">No similar products found.</p>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn btn-muted" id="closestSearchBackBtn" type="button">Back</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dialog-backdrop" id="historyEditDialog" aria-hidden="true">
+    <div class="dialog-card detail-popup-card" role="dialog" aria-modal="true" aria-label="Edit Barcode">
+      <label class="visually-hidden">
+        <span>ID</span>
+        <input class="input" id="historyEditIdInput" type="text" readonly />
+      </label>
+      <div class="detail-popup-grid">
+        <div class="detail-popup-row detail-popup-row--60-40">
+          <label class="detail-popup-field">
+            <span>Barcode</span>
+            <input class="input" id="historyEditBarcodeInput" type="text" readonly />
+          </label>
+          <label class="detail-popup-field">
+            <span>Quantity</span>
+            <input class="input" id="historyEditQtyInput" type="number" min="1" step="1" />
+          </label>
+        </div>
+        <label class="detail-popup-field">
+          <span>Italian Name</span>
+          <input class="input" id="historyEditItalianNameInput" type="text" />
+        </label>
+        <div class="detail-popup-row detail-popup-row--half">
+          <label class="detail-popup-field">
+            <span>Cost</span>
+            <input class="input" id="historyEditPPriceInput" type="text" inputmode="decimal" />
+          </label>
+          <label class="detail-popup-field">
+            <span>Price</span>
+            <input class="input" id="historyEditSPriceInput" type="text" inputmode="decimal" />
+          </label>
+        </div>
+        <div class="detail-popup-row detail-popup-row--half">
+          <label class="detail-popup-field">
+            <span>Discount%</span>
+            <input class="input" id="historyEditSDiscountInput" type="text" inputmode="decimal" />
+          </label>
+          <label class="detail-popup-field">
+            <span>Disc. Price</span>
+            <input class="input" id="historyEditDiscountPriceInput" type="text" inputmode="decimal" readonly />
+          </label>
+        </div>
+        <div class="detail-popup-actions">
+          <button class="btn btn-primary" id="historyEditSaveBtn" type="button">Save</button>
+          <button class="btn btn-muted" id="historyEditBackBtn" type="button">Back</button>
+        </div>
+      </div>
+      <div class="save-note" id="historyEditSaveNote" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <div class="app-update-notice" id="appUpdateNotice" role="status" hidden>
+    <span>Update available</span>
+    <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
+  </div>
+  <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
+  <script src="js/app.bundle.js?v=117" defer></script>
+</body>
+</html>

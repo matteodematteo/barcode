@@ -1,0 +1,326 @@
+.dialog-backdrop {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+    background: rgba(10, 16, 22, 0.45);
+    z-index: 20;
+  }
+
+  .dialog-backdrop.is-open { display: flex; }
+
+  .dialog-card {
+    width: min(100%, 400px);
+    padding: 7px;
+  }
+
+  .dialog-card p {
+    margin: 10px 0 0;
+    color: var(--muted);
+    line-height: 1.45;
+  }
+
+  #closestSearchDialog,
+  #historyEditDialog {
+    align-items: flex-start;
+    justify-content: center;
+    padding: max(12px, env(safe-area-inset-top)) 16px 16px;
+  }
+
+  #closestSearchDialog .dialog-card,
+  #historyEditDialog .dialog-card {
+    position: fixed;
+    top: max(12px, env(safe-area-inset-top));
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(calc(100% - 32px), 400px);
+    height: 45vh;
+    max-height: 45vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    touch-action: pan-y;
+  }
+
+  .closest-search-dialog-card,
+  .detail-popup-card,
+  .sales-period-dialog-card {
+    display: grid;
+    gap: 12px;
+    align-content: start;
+  }
+
+  .sales-period-grid {
+    display: grid;
+    gap: 10px;
+  }
+
+  .sales-period-shortcuts {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .sales-period-shortcuts .btn {
+    min-width: 0;
+    padding: 0 4px;
+    font-size: 0.72rem;
+  }
+
+  .sales-period-status {
+    color: var(--danger);
+  }
+
+  .closest-search-status:empty {
+    display: none;
+  }
+
+  .closest-search-results {
+    gap: 0;
+    padding: 2px 2px 0;
+    overflow-y: auto;
+    align-content: start;
+    touch-action: pan-y;
+  }
+
+  .closest-search-progress {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 0.76rem;
+  }
+
+  .closest-search-progress[hidden] {
+    display: none;
+  }
+
+  .closest-search-loader {
+    width: 24px;
+    height: 24px;
+    border: 3px solid rgba(20, 28, 36, 0.14);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: api-loader-spin 700ms linear infinite;
+  }
+
+  .closest-search-item {
+    display: grid;
+    grid-template-columns: minmax(0, 85fr) minmax(76px, 15fr);
+    gap: 12px;
+    align-items: center;
+    padding: 12px 4px;
+    border-bottom: 1px solid rgba(20, 28, 36, 0.1);
+  }
+
+  .closest-search-item:last-child {
+    border-bottom: 0;
+  }
+
+  .closest-search-info {
+    min-width: 0;
+    display: grid;
+    gap: 6px;
+  }
+
+  .closest-search-name {
+    min-width: 0;
+    font-size: 0.84rem;
+    font-weight: 800;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .closest-search-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 0.71rem;
+    line-height: 1.25;
+  }
+
+  .closest-search-meta span:not(:last-child)::after {
+    content: "|";
+    margin-left: 8px;
+    color: rgba(20, 28, 36, 0.3);
+  }
+
+  .closest-search-barcode {
+    color: var(--text);
+    font-weight: 800;
+  }
+
+  .closest-search-select-btn {
+    min-height: 34px;
+    margin: 0;
+    justify-self: center;
+    align-self: center;
+    padding: 0 12px;
+    border-radius: 999px;
+  }
+
+  .detail-popup-grid {
+    display: grid;
+    gap: 10px;
+    align-content: start;
+  }
+
+  .detail-popup-row {
+    display: grid;
+    gap: 10px;
+  }
+
+  .detail-popup-row--60-40 {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  }
+
+  .detail-popup-row--half {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .detail-popup-field {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .detail-popup-field span {
+    color: var(--muted);
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .detail-popup-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 2px;
+  }
+
+  .save-note {
+    margin-top: 12px;
+    min-height: 1.3em;
+    color: var(--success);
+    font-size: 0.92rem;
+    transition: opacity 160ms ease, color 160ms ease;
+  }
+
+  .save-note:empty {
+    opacity: 0;
+  }
+
+  .save-note.show-success {
+    color: var(--success);
+    opacity: 1;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+/* Compact print dialog. */
+#printDialog .dialog-card {
+  padding: 16px;
+  width: min(100%, 400px);
+  max-height: calc(100dvh - 36px);
+  overflow-y: auto;
+  background: #fffcf8;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px #34201526;
+}
+#printDialog h2 { margin: 0; font-size: 20px; }
+#printDialog p { margin: 8px 0 18px; font-size: 13px; line-height: 1.45; }
+#printDialog .print-field { display: grid; gap: 8px; }
+#printDialog .print-field label { font-size: 13px; font-weight: 700; }
+#printTunnelSelect { min-height: 38px; height: 38px; padding: 0 12px; font-size: 14px; }
+#printDialog .print-timestamp-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  margin-top: 12px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+#printTimestampCheckbox { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+#printDialog .compact-print-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 18px;
+}
+#printDialog .compact-print-actions .btn {
+  min-height: 38px;
+  height: 38px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.print-request-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--panel-line);
+}
+.print-request-section h3 { margin: 0 0 8px; font-size: 14px; }
+.print-request-list { display: grid; gap: 6px; max-height: 190px; overflow-y: auto; overscroll-behavior: contain; }
+#printDialog .print-request-empty { margin: 0; font-size: 12px; }
+.print-request-row {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid var(--panel-line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.print-request-row strong { font-size: 12px; }
+.print-request-row span { color: var(--muted); font-size: 11px; }
+.print-request-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+#confirmDialog { z-index: 40; }
+#printRequestDetailDialog { z-index: 30; }
+#printRequestDetailDialog .print-request-detail-card {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto auto;
+  gap: 10px;
+  width: min(100%, 520px);
+  height: min(760px, calc(100dvh - 28px));
+  min-height: 0;
+  padding: 16px;
+  background: #fffcf8;
+}
+.print-request-detail-meta { margin: 0 !important; font-size: 12px; }
+.print-request-detail-items { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.print-request-item { padding: 10px 2px; border-bottom: 1px solid var(--panel-line); }
+.print-request-item-top { display: flex; justify-content: space-between; gap: 12px; overflow-wrap: anywhere; }
+.print-request-item-top strong { font-size: 13px; }
+.print-request-item-top span { flex: none; font-size: 12px; font-weight: 700; }
+.print-request-item-name { margin-top: 4px; font-size: 12px; overflow-wrap: anywhere; }
+.print-request-item-price { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.print-request-options { display: grid; grid-template-columns: 1fr auto; gap: 5px 10px; align-items: center; }
+.print-request-options > label:first-child { grid-column: 1 / -1; font-size: 12px; font-weight: 700; }
+#printRequestTunnelSelect { min-height: 38px; height: 38px; font-size: 16px; }
+#printRequestDetailDialog .print-timestamp-option { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.print-request-detail-status { margin: 0 !important; min-height: 1em; color: var(--danger) !important; font-size: 12px; }
+.print-request-detail-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 0; }
+.print-request-detail-actions .btn { min-width: 0; min-height: 40px; padding: 0 4px; font-size: 11px; }

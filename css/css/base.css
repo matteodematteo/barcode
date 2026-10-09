@@ -1,0 +1,63 @@
+:root {
+    --bg: #f3efe7;
+    --panel: rgba(255, 252, 247, 0.93);
+    --panel-line: rgba(20, 28, 36, 0.1);
+    --text: #18212a;
+    --muted: #667483;
+    --accent: #bf5a31;
+    --accent-strong: #a34a26;
+    --surface: #0f161e;
+    --success: #136f63;
+    --danger: #9c3041;
+    --shadow: 0 22px 50px rgba(18, 24, 31, 0.14);
+    --radius-xl: 22px;
+    --radius-lg: 18px;
+    --radius-md: 12px;
+    --radius-sm: 10px;
+    --font: "Aptos", "Segoe UI", sans-serif;
+    --control-square-size: 42px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html,
+  body { min-height: 100%; }
+
+  body {
+    margin: 0;
+    color: var(--text);
+    font-family: var(--font);
+    background:
+      radial-gradient(circle at top left, rgba(191, 90, 49, 0.18), transparent 28%),
+      radial-gradient(circle at top right, rgba(19, 111, 99, 0.14), transparent 24%),
+      linear-gradient(180deg, #fbf8f2 0%, var(--bg) 100%);
+  }
+
+  .app-shell {
+    width: min(820px, calc(100% - 24px));
+    margin: 0 auto;
+    padding: max(6px, env(safe-area-inset-top)) 0 max(16px, env(safe-area-inset-bottom));
+  }
+
+  .card,
+  .dialog-card {
+    background: var(--panel);
+    border: 1px solid var(--panel-line);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(14px);
+  }
+
+  .card { padding: 4px 6px 6px; }
+
+  h2 {
+    margin: 0;
+    letter-spacing: -0.04em;
+  }
+
+  h2 {
+    font-size: 0.96rem;
+    line-height: 1.1;
+  }
+
+  

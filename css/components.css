@@ -1,0 +1,142 @@
+.btn,
+  .input,
+  .select {
+    min-height: var(--control-square-size);
+    border-radius: var(--radius-md);
+    border: 1px solid transparent;
+    width: 100%;
+  }
+
+  .btn {
+    cursor: pointer;
+    padding: 0 10px;
+    font-weight: 700;
+    transition: transform 150ms ease, opacity 150ms ease;
+    font-size: 0.82rem;
+  }
+
+  .btn:hover { transform: translateY(-1px); }
+  .btn:disabled,
+  .input:disabled,
+  .select:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+
+  .btn-primary {
+    color: #fff7f2;
+    background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+    box-shadow: 0 16px 28px rgba(191, 90, 49, 0.22);
+  }
+
+  .btn-primary[data-mode="stop"] {
+    background: linear-gradient(135deg, #7d2431, #9f3343);
+    box-shadow: 0 16px 28px rgba(125, 36, 49, 0.18);
+  }
+
+  .btn-muted,
+  .select {
+    color: var(--text);
+    background: rgba(20, 28, 36, 0.06);
+    border-color: rgba(20, 28, 36, 0.08);
+  }
+
+  #cameraSelect {
+    font-size: 0.72rem;
+  }
+
+  .input,
+  .textarea {
+    padding: 9px 10px;
+    border-color: rgba(20, 28, 36, 0.12);
+    background: rgba(255, 255, 255, 0.96);
+    color: var(--text);
+    font-size: 0.84rem;
+  }
+
+  .textarea {
+    min-height: 96px;
+    resize: vertical;
+  }
+
+  .input:focus,
+  .select:focus,
+  .textarea:focus {
+    outline: 2px solid rgba(191, 90, 49, 0.28);
+    outline-offset: 1px;
+  }
+
+  .mini-pill {
+    background: rgba(20, 28, 36, 0.05);
+    color: var(--muted);
+    text-align: center;
+  }
+
+  .section-card {
+    margin-top: 10px;
+  }
+
+  .field-card {
+    padding: 4.5px 8px;
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.68);
+    border: 1px solid rgba(20, 28, 36, 0.08);
+  }
+
+  .field-card label {
+    display: block;
+    color: var(--muted);
+    font-size: 0.62rem;
+    margin-bottom: 5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .field-value {
+    font-size: 0.8rem;
+    font-weight: 700;
+    line-height: 1.28;
+    word-break: break-word;
+    min-height: 1.25em;
+  }
+
+  .sales-field-value {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 1.25em;
+  }
+
+  .sales-loader {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid rgba(20, 28, 36, 0.14);
+    border-top-color: var(--accent);
+    animation: api-loader-spin 700ms linear infinite;
+  }
+
+  .sales-loader[hidden] {
+    display: none;
+  }
+
+  .sales-period-btn.has-period {
+    color: #fff7f2;
+    background: #136f63;
+    border-color: #136f63;
+  }
+
+  .field-card[hidden] {
+    display: none;
+  }
+
+  .field-value.is-discount {
+    color: #b42318;
+    font-weight: 800;
+  }
+
+  #field_disc_cost,
+  #field_disc_iva,
+  #field_discount_percent {
+    color: var(--text);
+    font-weight: 700;
+  }
+
+  

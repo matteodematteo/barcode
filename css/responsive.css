@@ -1,0 +1,101 @@
+@media (max-width: 680px) {
+    .app-shell { width: min(100%, calc(100% - 16px)); }
+    .card,
+    .dialog-card {
+      box-shadow: 0 12px 24px rgba(18, 24, 31, 0.1);
+      backdrop-filter: none;
+    }
+    .top-tools { grid-template-columns: 1fr; }
+    .button-row { grid-template-columns: 1fr; }
+    .lookup-row { grid-template-columns: minmax(0, 1fr) 74px 74px; }
+    .field-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .helper-row { grid-template-columns: var(--control-square-size) minmax(0, 1fr) minmax(0, 1fr) var(--control-square-size); }
+    .card { border-radius: 22px; }
+    .preview-frame { width: 100%; aspect-ratio: 2.02; }
+    .preview-meta { top: 8px; left: 8px; right: 8px; }
+    .preview-placeholder { font-size: 0.74rem; }
+  }
+
+  @media (max-width: 430px) {
+    :root {
+      --control-square-size: 38px;
+    }
+    .top-tools,
+    .button-row { gap: 8px; }
+    .helper-row {
+      grid-template-columns: var(--control-square-size) minmax(0, 1fr) minmax(0, 1fr) var(--control-square-size);
+      gap: 8px;
+    }
+    .btn,
+    .input,
+    .select { min-height: var(--control-square-size); }
+    .btn { font-size: 0.74rem; padding: 0 8px; }
+    .field-grid { gap: 8px; }
+    .field-card { padding: 4px 6px; }
+    .field-value { font-size: 0.74rem; }
+    .sales-summary-row #field_create_time { font-size: clamp(0.62rem, 3.1vw, 0.74rem); letter-spacing: -0.01em; }
+    .history-actions { gap: 8px; }
+    .history-primary { font-size: 0.88rem; }
+    .history-qty { font-size: 0.68rem; }
+    .history-name { font-size: 0.68rem; }
+    .history-meta { gap: 10px; font-size: 0.68rem; }
+    .floating-action-btn {
+      top: max(12px, env(safe-area-inset-top));
+      right: max(12px, env(safe-area-inset-right));
+      width: 38px;
+      min-width: 38px;
+      max-width: 38px;
+      height: 38px;
+      flex-basis: 38px;
+    }
+    .floating-refresh-btn {
+      top: calc(max(12px, env(safe-area-inset-top)) + 46px);
+    }
+    .floating-lock-scroll-btn {
+      top: calc(max(12px, env(safe-area-inset-top)) + 92px);
+    }
+    #closestSearchDialog .dialog-card,
+    #historyEditDialog .dialog-card {
+      width: min(calc(100% - 20px), 400px);
+      top: max(10px, env(safe-area-inset-top));
+    }
+    .closest-search-item {
+      grid-template-columns: minmax(0, 85fr) minmax(72px, 15fr);
+      gap: 10px;
+      padding: 10px 2px;
+    }
+    .detail-popup-row--60-40,
+    .detail-popup-row--half {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .history-detail-btn { min-height: 30px; width: auto; padding: 0 8px; margin-right: 32px; font-size: 0.68rem; }
+    .toast { width: calc(100% - 28px); text-align: center; }
+  }
+
+  /* Prevent iOS Safari auto-zoom when focusing form fields. */
+  @supports (-webkit-touch-callout: none) {
+    .input,
+    .select,
+    .textarea,
+    #barcodeInput,
+    #cameraSelect,
+    #historyEditItalianNameInput,
+    #historyEditPPriceInput,
+    #historyEditSPriceInput,
+    #historyEditSDiscountInput,
+    #historyEditQtyInput,
+    #salesPeriodStartInput,
+    #salesPeriodEndInput {
+      font-size: 16px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation: none !important;
+      transition: none !important;
+      scroll-behavior: auto !important;
+    }
+  }
