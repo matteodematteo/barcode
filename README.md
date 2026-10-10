@@ -19,8 +19,15 @@ Deploy this directory to an HTTPS static host; no build server is required.
 Edit the top-level `js/*.js` and `css/*.css` source files, then run:
 
 ```powershell
+python -m pip install -r requirements-build.txt
 python build.py
 ```
+
+The pinned Python minifiers are build-only dependencies; the deployed app
+requires no packages. Readable source modules remain available for edits.
+Set `APP_VERSION` in `sw.js` before building a release. The build synchronizes
+the HTML version, manifest, icon URLs (including the header), JS/CSS URLs,
+preview pages, and service-worker cache name from that value.
 
 Commit/deploy the generated `js/app.bundle.js`, `js/capture.bundle.js`, and
 `css/interface.bundle.css` alongside the source. The nested `js/js` and `css/css`
@@ -31,6 +38,11 @@ mode. The main screen requests one core script and one stylesheet. Camera code
 and the decoder warm after first paint, without requesting camera permission.
 Capture requests hardware synchronously in the button's click, in parallel with
 any remaining code loading, and shows video before decoding is ready.
+The initial request prefers 1280×720 with no forced aspect ratio or software
+resize mode. Custom focus constraints run after playback begins. After two
+unsuccessful reads, the existing track requests 1920×1080 detail in the background;
+unsupported resolution changes leave the working preview intact. Pointer/focus
+on Capture also warms the decoder without opening hardware.
 The decoder runs in a worker and transfers pixel buffers without
 blocking the interface. The worker stays ready for subsequent captures. Saved
 authentication refreshes when a product request needs it. The service worker
@@ -39,8 +51,13 @@ installed navigation immediately while refreshing HTML in the background.
 
 The vendored reader and WASM are pinned together to **ZXing WASM 3.1.5**. Their
 npm tarball integrity was verified during import. See the vendor README for the
-binary SHA-256. When changing deployed assets, bump their version URLs, the
-worker cache name, and the HTML/service-worker app version together.
+binary SHA-256. When changing deployed assets, bump `APP_VERSION` in `sw.js`
+and rebuild; asset URLs, the cache name, and the HTML version update together.
+
+Capture status labels stay compact in a fixed-height, single-line footer.
+Their font scales with viewport width; full diagnostic text remains in the
+status accessibility label/title and the error overlay. The retry button
+overlays the preview, so showing it cannot shrink the camera view.
 
 ## Browser checks
 
@@ -49,6 +66,7 @@ With the local server running, install the optional test dependency and run:
 ```powershell
 python -m pip install playwright
 python tests/test_capture.py
+python tests/test_camera_startup.py
 ```
 
 Tests use installed Microsoft Edge, fake cameras, an independently encoded
@@ -57,18 +75,23 @@ They cover responsive layout, no camera hardware on startup, immediate return,
 repeat capture, cancellation during permissions, Back/Escape, denied permissions,
 camera release, and installed offline startup/capture. Screenshots and fixtures
 are written to the system temporary `webscanner-qa` directory.
+The startup check also holds the camera bundle back to verify early preview,
+checks real resolution changes on one stream, and covers rejected/canceled upgrades.
 
 For Android emulation and WebKit with an iPhone viewport/user agent:
 
 ```powershell
 python -m playwright install webkit
 python tests/test_mobile_compat.py
+python tests/test_capture_layout.py
 ```
 
 The Android test captures a real barcode from fake video. WebKit checks the
 iOS constraints, inline video, gesture and denied-permission paths, compact
 layout, and actual worker/WASM decoding. WebKit's Windows port uses a mocked
 camera permission API; these checks do not replace physical phone testing.
+The layout check covers one-line capture statuses from 280px through landscape
+widths, stable camera geometry including retry, and bounded history rendering.
 
 To check the update notice and Reload flow (starts its own local server):
 

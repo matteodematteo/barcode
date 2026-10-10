@@ -2,14 +2,22 @@
 
 /* Status, toast, dialogs, and scroll UI */
 
-function setStatus(message) {
+function setStatus(message, captureMessage) {
   const nextMessage = String(message || "");
+  if (state.capturePageOpen) {
+    const compact = String(captureMessage ?? nextMessage).replace(/\s+/g, " ").trim();
+    const label = compact.length <= 26 ? compact : "Capture in progress";
+    const status = state.els.captureStatus;
+    if (status.textContent !== label) status.textContent = label;
+    // Retain complete diagnostics without making the camera footer grow.
+    if (status.title !== nextMessage) status.title = nextMessage;
+    if (status.getAttribute("aria-label") !== nextMessage) status.setAttribute("aria-label", nextMessage);
+  }
   if (state.lastStatusMessage === nextMessage) {
     return;
   }
   state.lastStatusMessage = nextMessage;
   state.els.statusText.textContent = nextMessage;
-  if (state.capturePageOpen) state.els.captureStatus.textContent = nextMessage;
 }
 
 

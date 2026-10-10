@@ -5,6 +5,7 @@
 // Max items rendered synchronously during init. The rest are deferred to
 // idle time so a large list doesn't block first paint.
 var HISTORY_INITIAL_BATCH = 25;
+let historyRenderGeneration = 0;
 
 // Build a single history <article> DOM node for the given item/index.
 function buildHistoryArticle(item, index) {
@@ -47,6 +48,7 @@ function buildHistoryArticle(item, index) {
 }
 
 function renderHistory() {
+  const generation = ++historyRenderGeneration;
   if (typeof syncSalesPerformanceRequests === "function") syncSalesPerformanceRequests();
   state.els.clearAllBtn.disabled = state.history.length === 0;
   state.els.sendTxtBtn.disabled = state.history.length === 0;
@@ -75,18 +77,27 @@ function renderHistory() {
 
   // Append remaining items in idle time — avoids blocking paint on large lists.
   if (state.history.length > initialCount) {
-    scheduleIdleWork(function () {
-      // Guard: if renderHistory() was called again while we were waiting, the
-      // list has already been replaced — nothing to append.
-      if (state.els.historyList.children.length !== initialCount) {
+    let nextIndex = initialCount;
+    const appendBatch = function () {
+      if (generation !== historyRenderGeneration) return;
+      if (state.capturePageOpen) {
+        window.setTimeout(function () { scheduleIdleWork(appendBatch, 200); }, 250);
         return;
       }
+      // Bound every batch, including browsers without requestIdleCallback.
+      // A large saved list must leave time for input and the first camera frame.
+      const started = performance.now();
+      const end = Math.min(nextIndex + HISTORY_INITIAL_BATCH, state.history.length);
       const remaining = document.createDocumentFragment();
-      for (let index = initialCount; index < state.history.length; index += 1) {
-        remaining.appendChild(buildHistoryArticle(state.history[index], index));
+      while (nextIndex < end) {
+        remaining.appendChild(buildHistoryArticle(state.history[nextIndex], nextIndex));
+        nextIndex += 1;
+        if (performance.now() - started >= 4) break;
       }
       state.els.historyList.appendChild(remaining);
-    }, 200);
+      if (nextIndex < state.history.length) scheduleIdleWork(appendBatch, 200);
+    };
+    scheduleIdleWork(appendBatch, 200);
   }
 }
 

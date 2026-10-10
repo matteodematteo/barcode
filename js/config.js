@@ -58,6 +58,13 @@ const CONFIG = {
       "supplier_name",
       "spec"
     ],
+    // Prefer a light native HD stream for first preview; raise detail on demand.
+    cameraStartupVideo: {
+      facingMode: { ideal: "environment" },
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 30 }
+    },
     videoConstraints: {
       audio: false,
       video: {

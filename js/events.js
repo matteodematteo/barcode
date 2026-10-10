@@ -29,6 +29,10 @@ function bindCriticalEvents() {
     }
   });
 
+  // Finish code/decoder preparation while the user approaches or presses
+  // Capture. Hardware permission still starts only in the click handler.
+  state.els.scanBtn.addEventListener("pointerdown", warmCaptureEngine, { passive: true });
+  state.els.scanBtn.addEventListener("focus", warmCaptureEngine);
   state.els.scanBtn.addEventListener("click", async function () {
     state.els.scanBtn.disabled = true;
     try {

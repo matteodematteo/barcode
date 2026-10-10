@@ -13,11 +13,12 @@ function warmCaptureEngine() {
 function requestCaptureStream(deviceId) {
   const request = { generation: state.captureGeneration, stream: null, playback: null, promise: null };
   state.captureRequest = request;
-  const video = { ...getActiveVideoConfig().video };
+  const video = { ...CONFIG.cameraStartupVideo };
   if (deviceId) {
     delete video.facingMode;
     video.deviceId = { exact: deviceId };
   }
+  request.videoConstraints = video;
   // Request permission synchronously in the original click, including on iOS.
   let camera;
   try {
@@ -31,7 +32,8 @@ function requestCaptureStream(deviceId) {
   request.promise = camera.catch(function (error) {
     if (!state.capturePageOpen || request.generation !== state.captureGeneration || document.hidden) throw error;
     if (!["OverconstrainedError", "NotFoundError"].includes(error.name)) throw error;
-    return navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" } } });
+    request.videoConstraints = { facingMode: { ideal: "environment" } };
+    return navigator.mediaDevices.getUserMedia({ audio: false, video: request.videoConstraints });
   }).then(function (stream) {
     if (!state.capturePageOpen || state.captureRequest !== request || request.generation !== state.captureGeneration || document.hidden) {
       stream.getTracks().forEach(function (track) { track.stop(); });
@@ -67,7 +69,7 @@ function loadCaptureEngine() {
   if (captureEnginePromise) return captureEnginePromise;
   captureEnginePromise = new Promise(function (resolve, reject) {
     const script = document.createElement("script");
-    script.src = "js/capture.bundle.js?v=120";
+    script.src = "js/capture.bundle.js?v=123";
     script.onload = function () {
       captureEngineLoaded = true;
       initRoiResize();
@@ -89,6 +91,9 @@ async function openCapturePage() {
   state.capturePageOpen = true;
   state.captureFirstFrameMarked = false;
   const generation = ++state.captureGeneration;
+  // Begin the hardware request before focus/layout work in the capture route.
+  performance.mark("webscanner-capture-request");
+  requestCaptureStream(state.activeDeviceId);
   state.captureReturnFocus = document.activeElement;
   state.captureMainUrl = location.pathname + location.search + location.hash;
   history.pushState({ webscannerCapture: true }, "", "#capture");
@@ -99,8 +104,6 @@ async function openCapturePage() {
   state.els.captureRetryBtn.hidden = true;
   state.els.previewPlaceholder.textContent = "Opening camera…";
   setStatus("Opening camera…");
-  performance.mark("webscanner-capture-request");
-  requestCaptureStream(state.activeDeviceId);
   try {
     await loadCaptureEngine();
     if (!state.capturePageOpen || generation !== state.captureGeneration) return;
@@ -116,7 +119,8 @@ async function openCapturePage() {
       ? "Allow camera access in your browser, then tap Try again."
       : error.message || "Could not start the camera.";
     state.els.captureRetryBtn.hidden = false;
-    setStatus(error.message || "Could not start capture.");
+    setStatus(error.message || "Could not start capture.",
+      ["NotAllowedError", "SecurityError"].includes(error.name) ? "Camera access needed" : "Camera unavailable");
   }
 }
 
