@@ -68,7 +68,7 @@
     .detail-popup-row--half {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
-    .history-detail-btn { min-height: 30px; width: auto; padding: 0 8px; margin-right: 32px; font-size: 0.68rem; }
+    .history-detail-btn { min-height: 30px; width: auto; padding: 0 8px; margin-right: 0; font-size: 0.68rem; }
     .toast { width: calc(100% - 28px); text-align: center; }
   }
 

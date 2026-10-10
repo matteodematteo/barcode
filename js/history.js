@@ -18,6 +18,8 @@ function buildHistoryArticle(item, index) {
   primary.className = "history-primary";
   primary.innerHTML = `<span class="history-code">${escapeHtml(item.barcode || "")}</span><span class="history-qty">Qty ${escapeHtml(String(item.comparison_qty || 1))}</span>`;
 
+  const nameRow = document.createElement("div");
+  nameRow.className = "history-name-row";
   const name = document.createElement("div");
   name.className = "history-name";
   name.textContent = item.italian_name || "No name loaded";
@@ -25,11 +27,8 @@ function buildHistoryArticle(item, index) {
   const meta = document.createElement("div");
   meta.className = "history-meta";
   const priceClass = isHistoryPriceDiscounted(item) ? "history-price is-discount" : "history-price";
-  meta.innerHTML = `<span class="history-cost">Cost: ${escapeHtml(formatPrice(item.p_price) || "-")}</span><span>Price: <span class="${priceClass}">${escapeHtml(getHistoryDisplayPrice(item))}</span></span><span class="history-supplier">Supplier: ${escapeHtml(item.supplier_name || "-")}</span>`;
-
-  const footer = document.createElement("div");
-  footer.className = "history-footer";
-  footer.appendChild(meta);
+  meta.innerHTML = `<span class="history-cost">Cost: ${escapeHtml(formatPrice(item.p_price) || "-")}</span><span class="history-price-group">Price: <span class="${priceClass}">${escapeHtml(getHistoryDisplayPrice(item))}</span></span><span class="history-supplier">${escapeHtml(item.supplier_name || "-")}</span>`;
+  meta.querySelector(".history-supplier").title = item.supplier_name || "-";
 
   const detailButton = document.createElement("button");
   detailButton.className = "btn btn-muted history-detail-btn";
@@ -37,11 +36,12 @@ function buildHistoryArticle(item, index) {
   detailButton.textContent = "Detail";
   detailButton.dataset.action = "detail";
   detailButton.dataset.index = String(index);
-  footer.appendChild(detailButton);
+  nameRow.appendChild(name);
+  nameRow.appendChild(detailButton);
 
   article.appendChild(primary);
-  article.appendChild(name);
-  article.appendChild(footer);
+  article.appendChild(nameRow);
+  article.appendChild(meta);
   article.dataset.index = String(index);
   article.setAttribute("tabindex", "0");
   return article;

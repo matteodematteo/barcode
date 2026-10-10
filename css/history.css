@@ -112,8 +112,16 @@
     white-space: nowrap;
   }
 
-  .history-name {
+  .history-name-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
     margin-top: 4px;
+  }
+
+  .history-name {
+    flex: 1;
+    min-width: 0;
     color: var(--muted);
     font-size: 0.72rem;
     line-height: 1.28;
@@ -127,7 +135,8 @@
     color: var(--text);
     font-size: 0.73rem;
     font-weight: 700;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    align-items: center;
   }
 
   .history-meta span {
@@ -140,13 +149,23 @@
   }
 
   .history-meta .history-supplier {
-    white-space: normal;
-    overflow-wrap: anywhere;
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border-left: 1px solid var(--panel-line, rgba(20, 28, 36, 0.16));
+    padding-left: 8px;
+  }
+
+  .history-cost,
+  .history-price-group {
+    flex: 0 0 auto;
   }
 
   body.show-history-details .history-meta .history-cost,
   body.show-history-details .history-meta .history-supplier {
-    display: inline;
+    display: block;
   }
 
   .history-price.is-discount {
@@ -154,20 +173,12 @@
     font-weight: 800;
   }
 
-  .history-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    margin-top: 8px;
-  }
-
   .history-detail-btn {
     min-height: 32px;
     width: auto;
     padding: 0 10px;
     margin-left: auto;
-    margin-right: 50px;
+    margin-right: 0;
     font-size: 0.72rem;
     border-radius: 999px;
     flex: 0 0 auto;

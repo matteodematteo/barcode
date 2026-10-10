@@ -53,11 +53,16 @@ npm tarball integrity was verified during import. See the vendor README for the
 binary SHA-256. When changing deployed assets, bump `APP_VERSION` in `sw.js`
 and rebuild; asset URLs, the cache name, and the HTML version update together.
 
-Capture supports QR Code, Data Matrix, Aztec, and PDF417 alongside the existing
-linear barcodes. Both iPhone and Android use the same local WASM worker with
-rotation/inversion support and confirmation on two fresh camera frames.
-2D content is captured as text; product lookup still requires content that
-matches a product code. QR links are not opened automatically.
+Capture reads linear product barcodes across the camera image, including EAN-13,
+EAN-8, UPC, Code 128 / GS1-128 (EAN-128), Code 39/93, Codabar, GS1 DataBar, and
+checksum-validated ITF-14. QR, Data Matrix, Aztec, and PDF417 are disabled.
+EAN and GS1-128 remain 1D symbologies; omnidirectional image scanning means the
+label can be horizontal, vertical, or diagonal. A failed full-preview read gets
+an estimated-angle correction in the worker, with additional angle passes for
+cluttered backgrounds. Successful ordinary reads skip this extra processing.
+Android and iPhone share the same typed-array implementation, without requiring
+OffscreenCanvas or native BarcodeDetector. Capture keeps its 1080p stream and
+requires two matching fresh frames before returning to the main page.
 
 Capture status labels stay compact in a fixed-height, single-line footer.
 Their font scales with viewport width; full diagnostic text remains in the
@@ -79,19 +84,27 @@ python tests/test_camera_startup.py
 python tests/test_sales_period.py
 ```
 
-For 2D fixtures and mobile browser decoding checks:
+For rotated linear fixtures and mobile browser decoding checks:
 
 ```powershell
 python -m pip install Pillow qrcode zxing-cpp
-python tests/test_2d_capture.py
+python tests/test_linear_capture.py
 ```
 
 These packages only generate test images; the webapp has no new runtime downloads.
 Use `--engine chromium` or `--engine webkit` to check a browser separately.
-The test covers four 2D formats, rotated/inverted/low-contrast images, Unicode QR
-content, empty frames, camera permissions, and Android camera capture fixtures.
+The test covers EAN and Code 128 / GS1-128 at 16 angles, inverted/low-contrast
+images, rejection of matrix codes, empty frames, camera permissions, and Android
+camera capture fixtures. ITF is restricted to valid retail ITF-14 to reject
+short or incomplete reads that have no mandatory checksum.
 WebKit exercises real decoding with mocked permissions; physical phone camera
 autofocus and lighting still require device testing.
+
+Windows mobile-browser QA for this release passed with Playwright 1.58.0 and
+WebKit 26.0. The locally installed Playwright 1.63.0 / WebKit 26.6 runtime timed
+out even on blank pages, so a separate test runtime was used. Subsequent WebKit
+startup attempts were also intermittent; the successful run covered all seven
+linear fixtures at 16 angles and rejection of the four matrix-code fixtures.
 
 Tests use installed Microsoft Edge, fake cameras, an independently encoded
 EAN-13 fixture, and stubbed product lookups. They never contact the live ERP.

@@ -36,8 +36,8 @@ function getActiveStreamTrackFromPreview() {
 
 const ZXING_FORMAT_MAP = {
   ean_13: "EAN13", ean_8: "EAN8", upc_a: "UPCA", upc_e: "UPCE",
-  code_128: "Code128", code_39: "Code39", codabar: "Codabar", itf: "ITF",
-  qr_code: "QRCode", data_matrix: "DataMatrix", aztec: "Aztec", pdf417: "PDF417"
+  code_128: "Code128", code_39: "Code39", codabar: "Codabar", itf_14: "ITF14",
+  code_93: "Code93", data_bar: "DataBar", data_bar_expanded: "DataBarExpanded"
 };
 
 async function createDetector() {
@@ -796,7 +796,7 @@ async function detectBarcodeInFrame() {
   const image = context.getImageData(0, 0, canvas.width, canvas.height);
   const text = await detector.detect(image,
     CONFIG.detectorFormats.map((format) => ZXING_FORMAT_MAP[format]).filter(Boolean),
-    { thorough: pass.thorough, enhance: pass.enhance !== false });
+    { thorough: pass.thorough, enhance: pass.enhance !== false, orientation: pass.orientation });
   if (session === state.scanSession) {
     state.detectionAttempt = attempt + 1;
     if (text) state.lastDetectionPass = pass;
@@ -815,7 +815,10 @@ function makeDetectionPass(attempt) {
   return {
     mode: getDetectionCropModes()[attempt % 2],
     thorough: thorough,
-    enhance: enhance
+    enhance: enhance,
+    // Full-preview passes preserve the entire label at any orientation.
+    // Estimate its angle first; later passes cover cluttered backgrounds.
+    orientation: attempt % 2 ? ["auto", 45, 15, -15, 30, -30][Math.floor(attempt / 2) % 6] : 0
   };
 }
 

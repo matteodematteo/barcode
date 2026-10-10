@@ -76,6 +76,78 @@ function enhanceContrast(pixels, inverted = false) {
   return output;
 }
 
+// Estimate the barcode axis from image gradients. Work stays in the worker
+// and is bounded by sampling; ordinary successful reads never pay this cost.
+function estimateBarcodeRotation(pixels) {
+  const { width, height, data } = pixels;
+  const step = Math.max(2, Math.floor(Math.max(width, height) / 480));
+  let xx = 0, yy = 0, xy = 0;
+  for (let y = step; y < height - step; y += step) {
+    for (let x = step; x < width - step; x += step) {
+      const i = (y * width + x) * 4 + 1;
+      const gx = data[i + step * 4] - data[i - step * 4];
+      const gy = data[i + step * width * 4] - data[i - step * width * 4];
+      xx += gx * gx;
+      yy += gy * gy;
+      xy += gx * gy;
+    }
+  }
+  if (xx + yy === 0) return 0;
+  let angle = -Math.atan2(2 * xy, xx - yy) * 90 / Math.PI;
+  // Native horizontal/vertical scans already cover multiples of 90 degrees.
+  if (angle > 45) angle -= 90;
+  if (angle < -45) angle += 90;
+  return Math.abs(angle) >= 5 ? angle : 0;
+}
+
+// Pure typed arrays also work on iOS versions without OffscreenCanvas.
+function rotateBarcodePixels(pixels, angle) {
+  const radians = angle * Math.PI / 180;
+  const cos = Math.cos(radians), sin = Math.sin(radians);
+  const rotatedWidth = Math.abs(pixels.width * cos) + Math.abs(pixels.height * sin);
+  const rotatedHeight = Math.abs(pixels.width * sin) + Math.abs(pixels.height * cos);
+  const scale = Math.min(1, 1920 / Math.max(rotatedWidth, rotatedHeight));
+  const width = Math.ceil(rotatedWidth * scale), height = Math.ceil(rotatedHeight * scale);
+  const output = new ImageData(width, height);
+  const source = new Uint8Array(pixels.width * pixels.height);
+  for (let i = 0; i < source.length; i++) {
+    const p = i * 4;
+    source[i] = (pixels.data[p] * 77 + pixels.data[p + 1] * 150 + pixels.data[p + 2] * 29) >> 8;
+  }
+  const target = new Uint32Array(output.data.buffer);
+  target.fill(0xffffffff);
+  const dx = cos / scale, dy = -sin / scale;
+  for (let y = 0; y < height; y++) {
+    let sx = ((0.5 - width / 2) * cos + (y + 0.5 - height / 2) * sin) / scale + pixels.width / 2 - 0.5;
+    let sy = (-(0.5 - width / 2) * sin + (y + 0.5 - height / 2) * cos) / scale + pixels.height / 2 - 0.5;
+    for (let x = 0; x < width; x++, sx += dx, sy += dy) {
+      if (sx >= 0 && sy >= 0 && sx < pixels.width - 1 && sy < pixels.height - 1) {
+        const left = Math.floor(sx), top = Math.floor(sy);
+        const fx = sx - left, fy = sy - top;
+        const p = top * pixels.width + left;
+        const upper = source[p] + (source[p + 1] - source[p]) * fx;
+        const lower = source[p + pixels.width] + (source[p + pixels.width + 1] - source[p + pixels.width]) * fx;
+        const value = Math.round(upper + (lower - upper) * fy);
+        target[y * width + x] = 0xff000000 | value * 0x010101;
+      }
+    }
+  }
+  return output;
+}
+
+function isAcceptedBarcode(result) {
+  if (!result?.isValid) return false;
+  // ZXing's ITF14 format filter can still return generic ITF fragments.
+  // Retail ITF-14 needs all 14 digits and its GS1 check digit.
+  if (/^ITF/.test(result.format)) {
+    if (!/^\d{14}$/.test(result.text)) return false;
+    let checksum = 0;
+    for (let i = 0; i < 14; i++) checksum += Number(result.text[i]) * (i % 2 ? 1 : 3);
+    return checksum % 10 === 0;
+  }
+  return true;
+}
+
 self.onmessage = async ({ data }) => {
   try {
     await ready;
@@ -91,27 +163,39 @@ self.onmessage = async ({ data }) => {
       minLineCount: 2
     };
     let results = await ZXingWASM.readBarcodes(pixels, options);
+    if (data.orientation && !results.some(isAcceptedBarcode)) {
+      const angle = data.orientation === "auto" ? estimateBarcodeRotation(pixels) : Number(data.orientation);
+      if (Number.isFinite(angle) && angle) {
+        const rotated = rotateBarcodePixels(pixels, angle);
+        const rotatedOptions = { ...options, tryHarder: true };
+        results = await ZXingWASM.readBarcodes(rotated, rotatedOptions);
+        if (data.thorough !== false && !results.some(isAcceptedBarcode)) {
+          invertPixels(rotated);
+          results = await ZXingWASM.readBarcodes(rotated, rotatedOptions);
+        }
+      }
+    }
     // ZXing's tryInvert applies to matrix codes. Also support light bars on
     // dark labels for the linear formats used by this app.
     // The heavy contrast-enhancement pair runs only when the page asks for
     // it: empty/moving frames fail here cheaply with original + inverted.
     // Missing flag means full behavior (keeps direct worker callers exact).
     const allowEnhance = data.enhance !== false;
-    if (data.thorough !== false && !results.some((result) => result.isValid)) {
+    if (data.thorough !== false && !results.some(isAcceptedBarcode)) {
       invertPixels(pixels);
       results = await ZXingWASM.readBarcodes(pixels, options);
-      if (allowEnhance && !results.some((result) => result.isValid)) {
+      if (allowEnhance && !results.some(isAcceptedBarcode)) {
         invertPixels(pixels);
         if (prepareContrast(pixels)) {
           const enhancedOptions = { ...options, binarizer: "FixedThreshold", minLineCount: 3 };
           results = await ZXingWASM.readBarcodes(enhanceContrast(pixels), enhancedOptions);
-          if (!results.some((result) => result.isValid)) {
+          if (!results.some(isAcceptedBarcode)) {
             results = await ZXingWASM.readBarcodes(enhanceContrast(pixels, true), enhancedOptions);
           }
         }
       }
     }
-    const result = results.find((result) => result.isValid);
+    const result = results.find(isAcceptedBarcode);
     let text = result?.text || "";
     // ZXing 3 normalizes UPC content to EAN-13 internally.
     if (result?.format === "UPCA" && /^0\d{12}$/.test(text)) text = text.slice(1);
