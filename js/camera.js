@@ -481,6 +481,7 @@ async function handleDetectedCode(detectedText) {
   if (state.els.barcodeInput.value !== code) {
     state.els.barcodeInput.value = code;
   }
+  updateQuantityPadAvailability();
   playCaptureSound();
   stopScanning(true);
   closeCapturePage({ captured: true });

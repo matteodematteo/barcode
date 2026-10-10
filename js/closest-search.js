@@ -62,6 +62,7 @@ async function handleClosestSearchLookup() {
   }
 
   state.els.barcodeInput.value = code;
+  updateQuantityPadAvailability();
   state.isClosestSearchLoading = true;
   state.closestSearchCode = code;
   state.closestSearchPendingHistoryId = "";
@@ -304,6 +305,7 @@ async function handleClosestSearchSelection(index) {
 
   if (state.isQuantityEntryUnlocked) {
     state.els.barcodeInput.value = barcode;
+    updateQuantityPadAvailability();
     clearResultFields();
     closeClosestSearchDialog();
     setStatus(`Selected ${barcode}. Tap Enter / Add to send request.`);
@@ -326,6 +328,7 @@ async function handleClosestSearchSelection(index) {
     // Discount is best-effort and is applied in a follow-up request below.
     const selectedData = await loadProductInfoResponse(barcode);
     state.els.barcodeInput.value = barcode;
+    updateQuantityPadAvailability();
     clearResultFields();
     renderProductData({
       product: selectedData.raw?.product || selectedData.raw,

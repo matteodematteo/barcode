@@ -18,6 +18,7 @@
           const input = document.getElementById(id);
           if (input && typeof draft[id] === "string") input.value = draft[id];
         }
+        updateQuantityPadAvailability();
       } catch (_) {}
     }, 0);
   };

@@ -6,6 +6,7 @@
 // These are the interactions a user could trigger within the first 200 ms:
 // tapping Capture, typing a barcode, or pressing Enter on barcodeInput.
 function bindCriticalEvents() {
+  state.els.barcodeInput.addEventListener("input", updateQuantityPadAvailability);
   state.els.historyDetailsSwitch.addEventListener("click", function () {
     setHistoryDetailsVisible(!state.showHistoryDetails);
   });
@@ -79,6 +80,7 @@ function bindCriticalEvents() {
     });
 
     state.els.barcodeInput.value = "";
+    updateQuantityPadAvailability();
     moveFocusToInput(state.els.barcodeInput);
   });
 
@@ -93,6 +95,7 @@ function bindDeferredEvents() {
   state.els.clearBarcodeBtn.addEventListener("click", function () {
     state.els.barcodeInput.value = "";
     state.els.quantityInput.value = "";
+    updateQuantityPadAvailability();
     setStatus("Barcode field cleared");
   });
 

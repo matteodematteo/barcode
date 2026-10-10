@@ -4,16 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f5f6f2" />
-  <meta name="webscanner-version" content="136" />
+  <meta name="webscanner-version" content="137" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Web Scanner" />
-  <link rel="manifest" href="manifest.webmanifest?v=136" />
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=136" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=136" />
+  <link rel="manifest" href="manifest.webmanifest?v=137" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=137" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=137" />
   <title>Web Barcode Scanner</title>
-  <link rel="preload" href="js/app.bundle.js?v=136" as="script" />
-  <link rel="preload" href="css/interface.bundle.css?v=136" as="style" />
+  <link rel="preload" href="js/app.bundle.js?v=137" as="script" />
+  <link rel="preload" href="css/interface.bundle.css?v=137" as="style" />
   <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
        round-trips for the above-the-fold shell (base + scanner + layout +
        essential components). The remaining interface styles load as one small sheet below. -->
@@ -370,13 +370,13 @@
   <!-- These sheets affect the visible page geometry. Keep them render-blocking so
        browsers paint the completed interface once instead of restyling sections
        progressively on a slow connection. -->
-  <link rel="stylesheet" href="css/interface.bundle.css?v=136" />
+  <link rel="stylesheet" href="css/interface.bundle.css?v=137" />
 </head>
 <body>
   <main class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=136" width="34" height="34" alt="" decoding="async" /></span>
+        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=137" width="34" height="34" alt="" decoding="async" /></span>
         <div><h1>Web Scanner</h1></div>
       </div>
       <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
@@ -525,10 +525,10 @@
         <span class="history-count" id="historyCountBadge" aria-live="polite">[0]</span>
       </div>
       <div class="history-actions">
-        <button class="btn btn-muted" id="clearSelectedBtn" type="button" disabled>Delete selected</button>
+        <button class="btn btn-muted" id="clearSelectedBtn" type="button" aria-label="Delete selected record" disabled>Delete</button>
         <button class="btn btn-muted" id="clearAllBtn" type="button">Clear list</button>
         <button class="btn btn-primary" id="printBtn" type="button">Print</button>
-        <div class="history-details-control"><button class="btn btn-muted history-details-switch" id="historyDetailsSwitch" type="button" role="switch" aria-checked="false" aria-label="Show cost and supplier in history" title="Show cost and supplier in history"><span class="history-details-switch-track" aria-hidden="true"><span class="history-details-switch-thumb"></span></span></button></div>
+        <div class="history-details-control"><label class="history-details-label" for="historyDetailsSwitch">+ More</label><button class="btn btn-muted history-details-switch" id="historyDetailsSwitch" type="button" role="switch" aria-checked="false" aria-label="Show cost and supplier in history" title="Show cost and supplier in history"><span class="history-details-switch-track" aria-hidden="true"><span class="history-details-switch-thumb"></span></span></button></div>
       </div>
       <div class="history-list" id="historyList" aria-live="polite">
         <p class="history-empty" id="historyEmpty">No scans yet.</p>
@@ -785,6 +785,6 @@
     <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
   </div>
   <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
-  <script src="js/app.bundle.js?v=136" defer></script>
+  <script src="js/app.bundle.js?v=137" defer></script>
 </body>
 </html>

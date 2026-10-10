@@ -2,6 +2,28 @@
 
 /* Input mode, quantity pad, and product info slider */
 
+let quantitySubmissionPending = false;
+
+function canEnterQuantity() {
+  return Boolean(state.isQuantityEntryUnlocked && !quantitySubmissionPending &&
+    String(state.els?.barcodeInput?.value || "").trim());
+}
+
+function updateQuantityPadAvailability() {
+  const enabled = canEnterQuantity();
+  if (state.els?.quantityInput) {
+    state.els.quantityInput.setAttribute("aria-disabled", String(!enabled));
+    state.els.quantityInput.tabIndex = enabled ? 0 : -1;
+  }
+  if (state.els?.addBarcodeBtn) state.els.addBarcodeBtn.disabled = !enabled;
+  if (!state.els?.quantityPad || !state.els?.quantityPadCard) return;
+  state.els.quantityPad.querySelectorAll("button").forEach(button => {
+    button.disabled = !enabled;
+  });
+  state.els.quantityPadCard.classList.toggle("is-disabled", !enabled);
+  state.els.quantityPadCard.setAttribute("aria-disabled", String(!enabled));
+}
+
 function updateEntryModeControls() {
   if (!state.els?.entryModeBtn || !state.els?.quantityInput || !state.els?.addBarcodeBtn || !state.els?.entryModeIcon) {
     return;
@@ -14,10 +36,7 @@ function updateEntryModeControls() {
   state.els.entryModeBtn.classList.toggle("btn-muted", !unlocked);
   state.els.quantityInput.disabled = false;
   state.els.quantityInput.readOnly = true;
-  state.els.quantityInput.tabIndex = unlocked ? 0 : -1;
-  state.els.quantityInput.setAttribute("aria-disabled", unlocked ? "false" : "true");
   state.els.quantityInput.classList.toggle("is-locked", !unlocked);
-  state.els.addBarcodeBtn.disabled = !unlocked;
   if (unlocked) {
     if (String(state.els.quantityInput.value || "") === "1") {
       state.els.quantityInput.value = "";
@@ -28,13 +47,9 @@ function updateEntryModeControls() {
     state.els.quantityInput.value = "1";
   }
   if (state.els.quantityPad && state.els.quantityPadCard) {
-    const padButtons = state.els.quantityPad.querySelectorAll("button");
-    for (let index = 0; index < padButtons.length; index += 1) {
-      padButtons[index].disabled = !unlocked;
-    }
-    state.els.quantityPadCard.classList.toggle("is-disabled", !unlocked);
     state.els.quantityPadCard.hidden = !unlocked;
   }
+  updateQuantityPadAvailability();
   if (state.els.productInfoSection) {
     state.els.productInfoSection.hidden = unlocked;
   }
@@ -46,7 +61,7 @@ function updateEntryModeControls() {
 
 
 async function handleQuantityPadInput(key) {
-  if (!state.isQuantityEntryUnlocked || !state.els?.quantityInput) {
+  if (!canEnterQuantity() || !state.els?.quantityInput) {
     return;
   }
 
@@ -106,6 +121,7 @@ function setQuantityEntryMode(unlocked, options) {
 
 
 async function addCurrentBarcodeWithQuantity() {
+  if (quantitySubmissionPending) return;
   const code = String(state.els.barcodeInput.value || "").trim();
   if (!code) {
     setStatus("Type or scan a barcode first");
@@ -115,7 +131,8 @@ async function addCurrentBarcodeWithQuantity() {
 
   const comparisonQty = sanitizeQuantity(state.els.quantityInput.value);
   state.els.quantityInput.value = String(comparisonQty);
-  state.els.addBarcodeBtn.disabled = true;
+  quantitySubmissionPending = true;
+  updateQuantityPadAvailability();
   try {
     await fetchProductInfo(code, {
       allowClosestSearch: false,
@@ -123,10 +140,10 @@ async function addCurrentBarcodeWithQuantity() {
       comparisonQty: comparisonQty
     });
   } finally {
-    state.els.addBarcodeBtn.disabled = false;
-    updateEntryModeControls();
+    quantitySubmissionPending = false;
     state.els.barcodeInput.value = "";
     state.els.quantityInput.value = "";
+    updateEntryModeControls();
   }
 }
 

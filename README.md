@@ -13,6 +13,9 @@ python -m http.server 8765 --bind 127.0.0.1
 
 Open http://localhost:8765. Camera access requires localhost or HTTPS.
 Deploy this directory to an HTTPS static host; no build server is required.
+Upload `index.html`, `sw.js`, `manifest.webmanifest`, the three icon PNGs, and
+the `css/` and `js/` folders including `js/vendor/`. The `docs/`, `previews/`,
+and `tests/` folders are optional and are not loaded by the webapp.
 
 ## Source and builds
 
@@ -72,6 +75,12 @@ overlays the preview, so showing it cannot shrink the camera view.
 Sales Period offers Today, Last 30 days, and Last 90 days.
 Last 30 days is the initial default; the matching preset is highlighted
 and focused when opening the dialog. Clean clears both dates before Apply.
+
+Capture-list actions use compact Delete, Clear list, and Print buttons, followed
+by a green **+ More** control. Its active switch is pale yellow (RGB 255, 244, 202).
+Quantity mode shows a lighter, disabled keypad until a barcode is present.
+Capture, typing, closest-match selection, clearing, submission, and update-draft
+restoration refresh that state without adding camera or network startup work.
 
 ## Browser checks
 
@@ -134,6 +143,7 @@ To check the update notice and Reload flow (starts its own local server):
 
 ```powershell
 python tests/test_updates.py
+python tests/test_history_controls.py
 ```
 
 This installs a previous release, serves the current release under the same

@@ -1,0 +1,99 @@
+/* Capture-list actions and quantity keypad availability. */
+.history-actions {
+  grid-template-columns: repeat(3, minmax(max-content, 1fr)) auto;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.history-actions > .btn {
+  height: 36px;
+  min-height: 36px;
+  padding: 0 4px;
+  border: 1px solid #e3e9e4;
+  border-radius: 8px;
+  background: #fff;
+  color: #52665d;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: none;
+}
+.history-actions > .btn:hover {
+  background: #f5f7f3;
+}
+.history-actions > #printBtn {
+  border-color: #157557;
+  background: #157557;
+  color: #fff;
+}
+.history-actions > #printBtn:hover {
+  background: #105e46;
+}
+.history-actions .history-details-switch {
+  border-radius: 999px;
+}
+.history-details-control {
+  height: 36px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 3px 6px;
+  background: #157557;
+  border-radius: 8px;
+}
+.history-details-label {
+  color: #fff;
+  font-size: 10px;
+  line-height: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.history-details-control .history-details-switch {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 16px;
+  min-height: 16px;
+  background: transparent;
+}
+.history-details-control .history-details-switch-track {
+  background: rgba(255, 255, 255, .35);
+}
+.history-details-control .history-details-switch-thumb {
+  width: 12px;
+  height: 12px;
+}
+.history-details-control .history-details-switch[aria-checked="true"] .history-details-switch-track {
+  background: rgb(255, 244, 202);
+}
+.history-details-control .history-details-switch[aria-checked="true"] .history-details-switch-thumb {
+  background: #105e46;
+}
+.history-count {
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.qty-pad-key[data-key="enter"] {
+  background: #157557;
+}
+.qty-pad-card.is-disabled .qty-pad-key {
+  background: #f8f9f6;
+  border-color: #edf1ec;
+  color: #b8c2ba;
+  opacity: 1;
+  cursor: not-allowed;
+}
+.qty-pad-card.is-disabled .qty-pad-key[data-key="enter"] {
+  background: #edf2ec;
+  color: #a9b6ae;
+}
+
+@media (max-width: 300px) {
+  .history-actions > .btn {
+    padding: 0 2px;
+    font-size: 11px;
+  }
+}

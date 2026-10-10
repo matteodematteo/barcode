@@ -319,6 +319,7 @@ async function fetchProductInfo(barcode, options) {
   }
 
   state.els.barcodeInput.value = code;
+  updateQuantityPadAvailability();
   clearResultFields();
   const comparisonQty = sanitizeQuantity(lookupOptions.comparisonQty);
   const lookupSequence = state.lookupSequence + 1;
