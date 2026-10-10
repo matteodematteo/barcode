@@ -489,6 +489,8 @@ function openSalesPeriodDialog() {
   state.els.salesPeriodStatus.textContent = "";
   state.els.salesPeriodDialog.classList.add("is-open");
   state.els.salesPeriodDialog.setAttribute("aria-hidden", "false");
+  const selected = syncSalesPeriodPresetSelection();
+  (selected || state.els.salesPeriodApplyBtn).focus({ preventScroll: true });
 }
 
 
@@ -503,7 +505,12 @@ function getSalesQuickPeriod(preset, today = new Date()) {
   const month = today.getMonth();
   let start;
   const end = today;
-  if (preset === "this-month") {
+  if (preset === "today") {
+    start = new Date(year, month, today.getDate());
+  } else if (preset === "last-30-days" || preset === "last-90-days") {
+    start = new Date(year, month, today.getDate());
+    start.setDate(start.getDate() - (preset === "last-30-days" ? 29 : 89));
+  } else if (preset === "this-month") {
     start = new Date(year, month, 1);
   } else if (preset === "last-3-months") {
     start = new Date(year, month - 2, 1);
@@ -514,6 +521,19 @@ function getSalesQuickPeriod(preset, today = new Date()) {
   }
   const localDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   return { beginDate: localDate(start), endDate: localDate(end) };
+}
+
+
+function syncSalesPeriodPresetSelection(preferredPreset) {
+  const buttons = [...state.els.salesPeriodDialog.querySelectorAll("[data-sales-period-preset]")];
+  const matches = buttons.filter(function (button) {
+    const period = getSalesQuickPeriod(button.dataset.salesPeriodPreset);
+    return period && period.beginDate === state.els.salesPeriodStartInput.value &&
+      period.endDate === state.els.salesPeriodEndInput.value;
+  });
+  const selected = matches.find(button => button.dataset.salesPeriodPreset === preferredPreset) || matches[0];
+  buttons.forEach(button => button.setAttribute("aria-pressed", String(button === selected)));
+  return selected;
 }
 
 

@@ -427,6 +427,12 @@ function bindDeferredEvents() {
     state.els.salesPeriodStartInput.value = period.beginDate;
     state.els.salesPeriodEndInput.value = period.endDate;
     state.els.salesPeriodStatus.textContent = "";
+    syncSalesPeriodPresetSelection(button.dataset.salesPeriodPreset);
+  });
+
+  [state.els.salesPeriodStartInput, state.els.salesPeriodEndInput].forEach(function (input) {
+    input.addEventListener("input", function () { syncSalesPeriodPresetSelection(); });
+    input.addEventListener("change", function () { syncSalesPeriodPresetSelection(); });
   });
 
   state.els.salesPeriodApplyBtn.addEventListener("click", function () {
@@ -439,7 +445,8 @@ function bindDeferredEvents() {
   state.els.salesPeriodAllBtn.addEventListener("click", function () {
     state.els.salesPeriodStartInput.value = "";
     state.els.salesPeriodEndInput.value = "";
-    state.els.salesPeriodStatus.textContent = "Click Apply to load all sales.";
+    syncSalesPeriodPresetSelection();
+    state.els.salesPeriodStatus.textContent = "Dates cleared. Click Apply to load all sales.";
   });
 
   state.els.productActivityRetryBtn.addEventListener("click", function () {

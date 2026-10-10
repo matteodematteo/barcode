@@ -58,6 +58,10 @@ Their font scales with viewport width; full diagnostic text remains in the
 status accessibility label/title and the error overlay. The retry button
 overlays the preview, so showing it cannot shrink the camera view.
 
+Sales Period offers Today, Last 30 days, Last 90 days, and the existing calendar
+presets. Last 30 days is the initial default; the matching preset is highlighted
+and focused when opening the dialog. Clean clears both dates before Apply.
+
 ## Browser checks
 
 With the local server running, install the optional test dependency and run:
@@ -66,6 +70,7 @@ With the local server running, install the optional test dependency and run:
 python -m pip install playwright
 python tests/test_capture.py
 python tests/test_camera_startup.py
+python tests/test_sales_period.py
 ```
 
 Tests use installed Microsoft Edge, fake cameras, an independently encoded
