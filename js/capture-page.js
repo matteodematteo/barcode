@@ -5,11 +5,69 @@
 let captureEnginePromise = null;
 let captureEngineLoaded = false;
 
+function warmCaptureEngine() {
+  // Compile in the worker after first paint, without opening camera hardware.
+  loadCaptureEngine().then(function () { return ensureZXingLoaded(); }).catch(function () {});
+}
+
+function requestCaptureStream(deviceId) {
+  const request = { generation: state.captureGeneration, stream: null, playback: null, promise: null };
+  state.captureRequest = request;
+  const video = { ...getActiveVideoConfig().video };
+  if (deviceId) {
+    delete video.facingMode;
+    video.deviceId = { exact: deviceId };
+  }
+  // Request permission synchronously in the original click, including on iOS.
+  let camera;
+  try {
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      throw new Error("Camera access requires HTTPS or localhost and a supported browser.");
+    }
+    camera = navigator.mediaDevices.getUserMedia({ audio: false, video: video });
+  } catch (error) {
+    camera = Promise.reject(error);
+  }
+  request.promise = camera.catch(function (error) {
+    if (!state.capturePageOpen || request.generation !== state.captureGeneration || document.hidden) throw error;
+    if (!["OverconstrainedError", "NotFoundError"].includes(error.name)) throw error;
+    return navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" } } });
+  }).then(function (stream) {
+    if (!state.capturePageOpen || state.captureRequest !== request || request.generation !== state.captureGeneration || document.hidden) {
+      stream.getTracks().forEach(function (track) { track.stop(); });
+      return { error: new DOMException("Capture closed", "AbortError") };
+    }
+    request.stream = stream;
+    const preview = state.els.cameraPreview;
+    preview.muted = true;
+    preview.playsInline = true;
+    preview.srcObject = stream;
+    // Show video independently of loading/compiling the decoder.
+    request.playback = preview.play().then(function () { return null; }, function (error) { return error; });
+    return { stream: stream };
+  }, function (error) { return { error: error }; });
+  return request;
+}
+
+function releaseCaptureHardware() {
+  const request = state.captureRequest;
+  state.captureRequest = null;
+  request?.stream?.getTracks().forEach(function (track) { track.stop(); });
+  if (captureEngineLoaded) {
+    clearResumePreviewTimer();
+    stopTracks();
+    setPreviewActive(false);
+  } else {
+    state.els.cameraPreview.pause();
+    state.els.cameraPreview.srcObject = null;
+  }
+}
+
 function loadCaptureEngine() {
   if (captureEnginePromise) return captureEnginePromise;
   captureEnginePromise = new Promise(function (resolve, reject) {
     const script = document.createElement("script");
-    script.src = "js/capture.bundle.js?v=117";
+    script.src = "js/capture.bundle.js?v=118";
     script.onload = function () {
       captureEngineLoaded = true;
       initRoiResize();
@@ -27,8 +85,9 @@ function loadCaptureEngine() {
 }
 
 async function openCapturePage() {
-  if (state.inputMode === "scanner" || state.capturePageOpen) return;
+  if (state.capturePageOpen) return;
   state.capturePageOpen = true;
+  state.captureFirstFrameMarked = false;
   const generation = ++state.captureGeneration;
   state.captureReturnFocus = document.activeElement;
   state.captureMainUrl = location.pathname + location.search + location.hash;
@@ -40,6 +99,8 @@ async function openCapturePage() {
   state.els.captureRetryBtn.hidden = true;
   state.els.previewPlaceholder.textContent = "Opening camera…";
   setStatus("Opening camera…");
+  performance.mark("webscanner-capture-request");
+  requestCaptureStream(state.activeDeviceId);
   try {
     await loadCaptureEngine();
     if (!state.capturePageOpen || generation !== state.captureGeneration) return;
@@ -48,9 +109,10 @@ async function openCapturePage() {
     await startScanning();
   } catch (error) {
     if (!state.capturePageOpen || generation !== state.captureGeneration || error.name === "AbortError") return;
-    await stopTracks();
-    setPreviewActive(false);
-    state.els.previewPlaceholder.textContent = isCameraPermissionError(error)
+    releaseCaptureHardware();
+    state.els.previewPlaceholder.hidden = false;
+    state.els.previewPlaceholder.style.display = "grid";
+    state.els.previewPlaceholder.textContent = ["NotAllowedError", "SecurityError"].includes(error.name)
       ? "Allow camera access in your browser, then tap Try again."
       : error.message || "Could not start the camera.";
     state.els.captureRetryBtn.hidden = false;
@@ -62,13 +124,7 @@ function closeCapturePage(options) {
   if (!state.capturePageOpen) return;
   state.capturePageOpen = false;
   state.captureGeneration += 1;
-  if (captureEngineLoaded) {
-    disarmFirstGestureCameraStart();
-    clearResumePreviewTimer();
-    // stopTracks releases every track synchronously before its promise resolves.
-    stopTracks();
-    setPreviewActive(false);
-  }
+  releaseCaptureHardware();
   state.els.capturePage.hidden = true;
   document.querySelector("main").inert = false;
   document.body.classList.remove("is-capturing");

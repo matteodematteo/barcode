@@ -35,12 +35,8 @@ async function init() {
 
   initProductInfoSlider();
 
-  state.inputMode = loadInputMode();
-  document.body.classList.toggle("mode-scanner", state.inputMode === "scanner");
-  state.els.barcodeInput.inputMode = state.inputMode === "scanner" ? "none" : "numeric";
-  updateInputModeSwitchUi();
+  state.els.barcodeInput.inputMode = "numeric";
 
-  // ── Use the already-loaded scrollLockState (Optimization #4) ─────────────
   state.manualScrollLocked = scrollLockState.isLocked;
   state.manualScrollLockY = 0;
   updateLockScreenScrollButton();
@@ -54,9 +50,11 @@ async function init() {
   // Authentication refresh is already shared and handled on demand by api.js.
   state.activeDeviceId = readSavedCameraId() || "";
   state.els.scanBtn.disabled = false;
-  setStatus(state.inputMode === "scanner" ? "Scanner mode: use an external scanner" : "Ready to capture");
-  if (state.inputMode === "scanner") moveFocusToInput(state.els.barcodeInput);
+  setStatus("Ready to capture");
   performance.mark("webscanner-ready");
+  window.requestAnimationFrame(function () {
+    scheduleIdleWork(warmCaptureEngine, 500);
+  });
 }
 
 if (document.readyState === "loading") {

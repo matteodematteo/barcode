@@ -4,15 +4,15 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f5f6f2" />
-  <meta name="webscanner-version" content="117" />
+  <meta name="webscanner-version" content="119" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Web Scanner" />
-  <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+  <link rel="manifest" href="manifest.webmanifest?v=119" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=119" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=119" />
   <title>Web Barcode Scanner</title>
-  <link rel="preload" href="js/app.bundle.js?v=117" as="script" />
+  <link rel="preload" href="js/app.bundle.js?v=118" as="script" />
   <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
        round-trips for the above-the-fold shell (base + scanner + layout +
        essential components). The remaining interface styles load as one small sheet below. -->
@@ -169,22 +169,6 @@
     .top-tools { grid-template-columns: 1fr; }
     .button-row { grid-template-columns: 1fr; }
     .lookup-row { grid-template-columns: minmax(0,1fr) 88px 88px; }
-    .input-mode-switch {
-      display: flex; padding: 3px; border-radius: 999px;
-      background: rgba(20,28,36,.06); gap: 3px;
-    }
-    .input-mode-option {
-      flex: 1; border: none; background: transparent; color: var(--muted);
-      font-weight: 700; font-size: .76rem; padding: 7px 0; border-radius: 999px;
-      cursor: pointer; transition: background 150ms ease, color 150ms ease;
-    }
-    .input-mode-option[aria-pressed="true"] {
-      background: var(--panel); color: var(--text);
-      box-shadow: 0 1px 4px rgba(18,24,31,.16);
-    }
-    body.mode-scanner .preview-frame, body.mode-scanner .scan-actions, body.mode-scanner #torchBtn {
-      display: none !important;
-    }
     .field-grid { grid-template-columns: repeat(6,minmax(0,1fr)); margin-top: 10px; }
     .span-half { grid-column: span 3; }
     .span-full { grid-column: 1/-1; }
@@ -386,14 +370,14 @@
        browsers paint the completed interface once instead of restyling sections
        progressively on a slow connection. -->
 
-  <link rel="stylesheet" href="css/interface.bundle.css?v=117" />
+  <link rel="stylesheet" href="css/interface.bundle.css?v=119" />
 </head>
 <body>
   <main class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4M3 16v4a1 1 0 0 0 1 1h4m8 0h4a1 1 0 0 0 1-1v-4M7 8v8m3-8v8m4-8v8m3-8v8"/></svg></span>
-        <div><h1>Web Scanner</h1><p>Capture. Check. Keep moving.</p></div>
+        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=119" width="34" height="34" alt="" decoding="async" /></span>
+        <div><h1>Web Scanner</h1></div>
       </div>
       <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
     <span class="visually-hidden">Refresh login</span>
@@ -416,14 +400,7 @@
     </header>
 
     <section class="card">
-      <div class="section-heading">
-        <h2>Find a product</h2>
-        <div class="input-mode-switch" id="inputModeSwitch" role="group" aria-label="Input mode">
-          <button class="input-mode-option" type="button" data-input-mode="phone" aria-pressed="true">Camera</button>
-          <button class="input-mode-option" type="button" data-input-mode="scanner" aria-pressed="false">Scanner</button>
-        </div>
-      </div>
-      <p class="entry-description">Capture a barcode or enter its number below.</p>
+      <div class="section-heading"><h2>Product</h2></div>
       <div class="controls">
         <div class="lookup-row">
           <input class="input" id="barcodeInput" type="text" inputmode="numeric" autocomplete="off" placeholder="Enter barcode" aria-label="Barcode" value="" />
@@ -452,10 +429,7 @@
         <div id="statusText" role="status">Ready to capture</div>
         <div class="api-loader" id="apiLoader" aria-hidden="true"></div>
       </div>
-    </section>
-
-    <section class="card section-card" id="productInfoSection">
-      <div class="section-heading"><h2 id="productInfoTitle">Product details</h2><span class="section-kicker">Latest capture</span></div>
+      <div class="product-details" id="productInfoSection" aria-label="Product details">
       <div class="pi-slider" id="productInfoSlider">
         <div class="pi-track" id="productInfoTrack">
           <div class="pi-slide" data-slide-index="0">
@@ -524,6 +498,7 @@
         <div class="field-card" id="field_supplier_name_compact_card" hidden><label for="field_supplier_name_compact">Supplier</label><div class="field-value" id="field_supplier_name_compact"></div></div>
         <div class="field-card" id="field_id_card" hidden><label for="field_id">ID</label><div class="field-value" id="field_id"></div></div>
       </div>
+      </div>
     </section>
 
     <section class="card section-card qty-pad-card" id="quantityPadCard" aria-label="Quantity keypad" hidden>
@@ -546,7 +521,7 @@
 
     <section class="card section-card">
       <div class="history-head">
-        <h2 id="historyTitle">Your scan list</h2>
+        <h2 id="historyTitle">Scan list</h2>
       </div>
       <div class="history-actions">
         <button class="btn btn-muted" id="clearSelectedBtn" type="button" disabled>Delete selected</button>
@@ -555,7 +530,7 @@
         <button class="btn btn-primary" id="printBtn" type="button">Print</button>
       </div>
       <div class="history-list" id="historyList" aria-live="polite">
-        <p class="history-empty" id="historyEmpty">Your list is ready. Capture your first barcode to get started.</p>
+        <p class="history-empty" id="historyEmpty">No scans yet.</p>
       </div>
     </section>
   </main>
@@ -563,7 +538,7 @@
   <section id="capturePage" class="capture-page" role="dialog" aria-modal="true" aria-labelledby="captureTitle" hidden>
     <header class="capture-header">
       <button id="captureBackBtn" class="btn capture-icon-btn" type="button" aria-label="Cancel capture and go back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></button>
-      <div><h2 id="captureTitle">Capture a barcode</h2><p>Point your camera at the label</p></div>
+      <div><h2 id="captureTitle">Capture a barcode</h2></div>
       <button class="btn capture-icon-btn" id="torchBtn" type="button" aria-label="Toggle flashlight" disabled>
     <span class="visually-hidden">Torch</span>
     <svg id="torchIcon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -599,7 +574,6 @@
 
     <footer class="capture-footer">
       <div id="captureStatus" role="status">Opening camera…</div>
-      <p>Hold steady. You’ll return automatically when it’s captured.</p>
       <button id="captureRetryBtn" class="btn btn-primary" type="button" hidden>Try again</button>
     </footer>
   </section>
@@ -810,6 +784,6 @@
     <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
   </div>
   <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
-  <script src="js/app.bundle.js?v=117" defer></script>
+  <script src="js/app.bundle.js?v=118" defer></script>
 </body>
 </html>

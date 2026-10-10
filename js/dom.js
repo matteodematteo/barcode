@@ -39,7 +39,6 @@ function queryCriticalElements() {
     apiLoader:          document.getElementById("apiLoader"),
     toast:              document.getElementById("toast"),
     lockScreenScrollBtn:document.getElementById("lockscreenscroll"),
-    inputModeSwitch:    document.getElementById("inputModeSwitch"),
     previewPlaceholder: document.getElementById("previewPlaceholder"),
     cameraBadge:        document.getElementById("cameraBadge"),
     resolutionBadge:    document.getElementById("resolutionBadge"),

@@ -263,7 +263,7 @@ function moveFocusToInput(input, options) {
 
   if (state.capturePageOpen) return;
   const shouldOpenKeyboard = Boolean(options?.openKeyboard);
-  if (!shouldOpenKeyboard && state.inputMode !== "scanner" &&
+  if (!shouldOpenKeyboard &&
       (input === state.els.barcodeInput || input === state.els.quantityInput)) {
     return;
   }

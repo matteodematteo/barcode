@@ -8,7 +8,7 @@
   let worker = null;
   let pending = null;
   let sequence = 0;
-  const workerUrl = new URL("zxing-worker.js?v=117", document.currentScript.src);
+  const workerUrl = new URL("zxing-worker.js?v=118", document.currentScript.src);
 
   window.ensureZXingLoaded = function () {
     if (readyPromise) return readyPromise;
@@ -241,7 +241,7 @@ function scheduleQuickPreviewResumeCheck() {
 
 
 async function ensurePreviewReadyAfterForeground() {
-  if (!state.capturePageOpen || document.hidden || state.cameraStartPromise || state.inputMode === "scanner" || state.isRecoveringPreview) {
+  if (!state.capturePageOpen || document.hidden || state.cameraStartPromise || state.isRecoveringPreview) {
     return;
   }
 
@@ -270,7 +270,7 @@ async function ensurePreviewReadyAfterForeground() {
     window.setTimeout(resolve, 320);
   });
 
-  if (!state.capturePageOpen || document.hidden || state.inputMode === "scanner" || state.isRecoveringPreview) {
+  if (!state.capturePageOpen || document.hidden || state.isRecoveringPreview) {
     return;
   }
 
@@ -286,7 +286,7 @@ async function ensurePreviewReadyAfterForeground() {
 
 
 async function ensureScanningAfterForegroundResume() {
-  if (!state.capturePageOpen || document.hidden || state.inputMode === "scanner" || state.cameraStartPromise || state.isRecoveringPreview) {
+  if (!state.capturePageOpen || document.hidden || state.cameraStartPromise || state.isRecoveringPreview) {
     return;
   }
   if (state.isScanning || !state.isCameraRunning) {
@@ -1109,53 +1109,14 @@ async function startCameraStream(preferredCameraId, activeVideoConfig) {
   const session = state.scanSession;
   const generation = state.captureGeneration;
 
-  const constraints = {
-    audio: false,
-    video: {}
-  };
-  const requestedVideo = activeVideoConfig?.video || {};
-
-  if (requestedVideo.width) {
-    constraints.video.width = {
-      ideal: requestedVideo.width.ideal,
-      max: requestedVideo.width.max
-    };
-  }
-  if (requestedVideo.height) {
-    constraints.video.height = {
-      ideal: requestedVideo.height.ideal,
-      max: requestedVideo.height.max
-    };
-  }
-  if (requestedVideo.aspectRatio) {
-    constraints.video.aspectRatio = { ideal: requestedVideo.aspectRatio.ideal };
-  }
-  if (requestedVideo.frameRate) {
-    constraints.video.frameRate = {
-      ideal: requestedVideo.frameRate.ideal,
-      max: requestedVideo.frameRate.max
-    };
-  }
-  if (requestedVideo.resizeMode) {
-    constraints.video.resizeMode = requestedVideo.resizeMode;
-  }
-
-  if (preferredCameraId) {
-    constraints.video.deviceId = { exact: preferredCameraId };
-  } else {
-    constraints.video.facingMode = { ideal: requestedVideo?.facingMode?.ideal || "environment" };
-  }
-
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia(constraints);
-  } catch (error) {
-    if (!["OverconstrainedError", "NotFoundError"].includes(error.name)) throw error;
-    // Stale camera IDs and strict resolution limits must not block camera access.
-    stream = await navigator.mediaDevices.getUserMedia({ audio: false,
-      video: { facingMode: { ideal: "environment" } } });
-  }
-  if (!state.capturePageOpen || generation !== state.captureGeneration || session !== state.scanSession || state.inputMode === "scanner") {
+  const request = state.captureRequest || requestCaptureStream(preferredCameraId);
+  const result = await request.promise;
+  if (result.error) throw result.error;
+  const stream = result.stream;
+  const playback = request.playback;
+  request.stream = null;
+  if (state.captureRequest === request) state.captureRequest = null;
+  if (!state.capturePageOpen || generation !== state.captureGeneration || session !== state.scanSession) {
     stream.getTracks().forEach((track) => track.stop());
     throw new DOMException("Camera start canceled", "AbortError");
   }
@@ -1177,12 +1138,13 @@ async function startCameraStream(preferredCameraId, activeVideoConfig) {
   } catch {
     // Older browsers ignore the property; the attributes above suffice.
   }
-  state.els.cameraPreview.srcObject = stream;
+  if (state.els.cameraPreview.srcObject !== stream) state.els.cameraPreview.srcObject = stream;
   // Start focus while the first frame is arriving, independently of playback
   // and decoder initialization. Devices with native autofocus need no reset.
   scheduleFocusRefresh(track);
   // play() resolves when playback starts; no separate metadata timeout needed.
-  await state.els.cameraPreview.play();
+  const playbackError = playback ? await playback : await state.els.cameraPreview.play().then(() => null, (error) => error);
+  if (playbackError) throw playbackError;
   if (!state.capturePageOpen || generation !== state.captureGeneration || session !== state.scanSession) {
     stream.getTracks().forEach((track) => track.stop());
     throw new DOMException("Camera start canceled", "AbortError");
@@ -1199,7 +1161,7 @@ const cameraConstraintQueues = new WeakMap();
 
 function isCurrentCameraTrack(track) {
   return Boolean(track && track === state.track && track.readyState !== "ended" &&
-    state.inputMode !== "scanner" && !document.hidden);
+    !document.hidden);
 }
 
 
@@ -1450,7 +1412,8 @@ async function startCamera(deviceId) {
     if (hardwareIssue) throw new Error(hardwareIssue);
 
     cleanupScanTimer();
-    await stopTracks();
+    if (state.stream) await stopTracks();
+    else stopScanning(true);
     if (!state.capturePageOpen || generation !== state.captureGeneration || document.hidden) throw new DOMException("Capture closed", "AbortError");
 
     const activeVideoConfig = getActiveVideoConfig();
@@ -1459,7 +1422,7 @@ async function startCamera(deviceId) {
     const preferredCameraId = deviceId || state.activeDeviceId || readSavedCameraId();
     await startCameraStream(preferredCameraId, activeVideoConfig);
 
-    if (!state.capturePageOpen || generation !== state.captureGeneration || state.inputMode === "scanner" || !state.track || state.track.readyState === "ended") {
+    if (!state.capturePageOpen || generation !== state.captureGeneration || !state.track || state.track.readyState === "ended") {
       throw new DOMException("Camera start canceled", "AbortError");
     }
 
@@ -1513,7 +1476,7 @@ function startScanTimeoutTimer() {
 
 
 async function startScanning() {
-  if (!state.capturePageOpen || document.hidden || state.isScanning || state.inputMode === "scanner") return;
+  if (!state.capturePageOpen || document.hidden || state.isScanning) return;
   const generation = state.captureGeneration;
   state.captureContext ||= state.els.captureCanvas.getContext("2d", { alpha: false, willReadFrequently: true });
   // Attach the rejection handler immediately while camera permission is pending.
@@ -1534,7 +1497,7 @@ async function startScanning() {
     if (session === state.scanSession) setStatus(error.message || "Scanner unavailable. Tap Capture to retry.");
     throw error;
   }
-  if (!state.capturePageOpen || generation !== state.captureGeneration || session !== state.scanSession || state.inputMode === "scanner") return;
+  if (!state.capturePageOpen || generation !== state.captureGeneration || session !== state.scanSession) return;
 
   scheduleFocusRefresh(state.track, { newScan: true });
   state.detectionAttempt = 0;

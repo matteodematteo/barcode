@@ -349,16 +349,6 @@ function bindDeferredEvents() {
     toggleScreenScrollLock();
   });
 
-  state.els.inputModeSwitch.addEventListener("click", function (event) {
-    const btn = event.target.closest(".input-mode-option");
-    if (!btn) {
-      return;
-    }
-    setInputMode(btn.dataset.inputMode).catch(function (error) {
-      setStatus(error.message || "Could not switch input mode");
-    });
-  });
-
   state.els.settingsDialog.addEventListener("click", function (event) {
     if (event.target === state.els.settingsDialog) {
       closeSettingsDialog();
@@ -538,7 +528,13 @@ function bindDeferredEvents() {
 
   const markPreviewAsLive = function () {
     if (!document.hidden && state.capturePageOpen) {
-      setPreviewActive(true);
+      state.els.previewPlaceholder.hidden = true;
+      state.els.previewPlaceholder.style.display = "none";
+      if (captureEngineLoaded) setPreviewActive(true);
+      if (!state.captureFirstFrameMarked) {
+        state.captureFirstFrameMarked = true;
+        performance.mark("webscanner-camera-frame");
+      }
     }
   };
   
@@ -552,12 +548,11 @@ function bindDeferredEvents() {
   });
 
   document.addEventListener("visibilitychange", function () {
-    if (!state.capturePageOpen || !captureEngineLoaded) return;
+    if (!state.capturePageOpen) return;
     if (document.hidden) {
       // Release hardware when backgrounded; only resume an open capture page.
-      stopTracks();
-      setPreviewActive(false);
-    } else {
+      releaseCaptureHardware();
+    } else if (captureEngineLoaded) {
       scheduleQuickPreviewResumeCheck();
     }
   });

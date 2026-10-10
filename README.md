@@ -26,8 +26,12 @@ Commit/deploy the generated `js/app.bundle.js`, `js/capture.bundle.js`, and
 `css/interface.bundle.css` alongside the source. The nested `js/js` and `css/css`
 directories are legacy copies and are not loaded by this app.
 
-The main screen requests one core script and one stylesheet. Camera code loads
-on demand. The decoder runs in a worker and transfers pixel buffers without
+Lookup and product details share one compact card; there is no external scanner
+mode. The main screen requests one core script and one stylesheet. Camera code
+and the decoder warm after first paint, without requesting camera permission.
+Capture requests hardware synchronously in the button's click, in parallel with
+any remaining code loading, and shows video before decoding is ready.
+The decoder runs in a worker and transfers pixel buffers without
 blocking the interface. The worker stays ready for subsequent captures. Saved
 authentication refreshes when a product request needs it. The service worker
 registers after initial paint, caches capture assets for offline use, and serves
@@ -49,7 +53,19 @@ python tests/test_capture.py
 
 Tests use installed Microsoft Edge, fake cameras, an independently encoded
 EAN-13 fixture, and stubbed product lookups. They never contact the live ERP.
-They cover responsive layout, no camera/decoder startup work, immediate return,
+They cover responsive layout, no camera hardware on startup, immediate return,
 repeat capture, cancellation during permissions, Back/Escape, denied permissions,
 camera release, and installed offline startup/capture. Screenshots and fixtures
 are written to the system temporary `webscanner-qa` directory.
+
+For Android emulation and WebKit with an iPhone viewport/user agent:
+
+```powershell
+python -m playwright install webkit
+python tests/test_mobile_compat.py
+```
+
+The Android test captures a real barcode from fake video. WebKit checks the
+iOS constraints, inline video, gesture and denied-permission paths, compact
+layout, and actual worker/WASM decoding. WebKit's Windows port uses a mocked
+camera permission API; these checks do not replace physical phone testing.

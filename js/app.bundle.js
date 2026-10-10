@@ -24,7 +24,6 @@ const CONFIG = {
     cameraStorageKey: "web_barcode_scanner_camera",
     roiStorageKey: "web_barcode_scanner_roi",
     productInfoSlideStorageKey: "web_barcode_scanner_pi_slide",
-    inputModeStorageKey: "web_barcode_scanner_input_mode",
     scrollLockStorageKey: "web_barcode_scanner_scroll_lock",
     scanIntervalMs: 16,
     mobileScanIntervalMs: 16,
@@ -123,6 +122,8 @@ function getSalesPeriodDate(daysAgo) {
 const state = {
     els: null,
     capturePageOpen: false,
+    captureRequest: null,
+    captureFirstFrameMarked: false,
     captureGeneration: 0,
     captureMainUrl: "",
     captureReturnFocus: null,
@@ -166,7 +167,6 @@ const state = {
     isQuantityEntryUnlocked: false,
     lockedScrollY: 0,
     pendingApiRequests: 0,
-    inputMode: "phone",
     manualScrollLocked: false,
     manualScrollLockY: 0,
     cameraStartPromise: null,
@@ -254,7 +254,6 @@ function queryCriticalElements() {
     apiLoader:          document.getElementById("apiLoader"),
     toast:              document.getElementById("toast"),
     lockScreenScrollBtn:document.getElementById("lockscreenscroll"),
-    inputModeSwitch:    document.getElementById("inputModeSwitch"),
     previewPlaceholder: document.getElementById("previewPlaceholder"),
     cameraBadge:        document.getElementById("cameraBadge"),
     resolutionBadge:    document.getElementById("resolutionBadge"),
@@ -807,7 +806,7 @@ function moveFocusToInput(input, options) {
 
   if (state.capturePageOpen) return;
   const shouldOpenKeyboard = Boolean(options?.openKeyboard);
-  if (!shouldOpenKeyboard && state.inputMode !== "scanner" &&
+  if (!shouldOpenKeyboard &&
       (input === state.els.barcodeInput || input === state.els.quantityInput)) {
     return;
   }
@@ -1311,65 +1310,6 @@ function applyDisplayMode() {
 }
 
 
-function loadInputMode() {
-  try {
-    const saved = localStorage.getItem(CONFIG.inputModeStorageKey);
-    return saved === "scanner" ? "scanner" : "phone";
-  } catch {
-    return "phone";
-  }
-}
-
-
-function saveInputMode(mode) {
-  try {
-    localStorage.setItem(CONFIG.inputModeStorageKey, mode);
-  } catch {
-    // Ignore storage failures (e.g. private browsing quota).
-  }
-}
-
-
-function updateInputModeSwitchUi() {
-  const switchEl = state.els?.inputModeSwitch;
-  if (!switchEl) {
-    return;
-  }
-  switchEl.querySelectorAll(".input-mode-option").forEach(function (btn) {
-    const isActive = btn.dataset.inputMode === state.inputMode;
-    btn.setAttribute("aria-pressed", isActive ? "true" : "false");
-  });
-}
-
-
-async function setInputMode(mode, options) {
-  const nextMode = mode === "scanner" ? "scanner" : "phone";
-  const changed = nextMode !== state.inputMode;
-  state.inputMode = nextMode;
-  document.body.classList.toggle("mode-scanner", nextMode === "scanner");
-  updateInputModeSwitchUi();
-
-  if (state.els?.barcodeInput) {
-    state.els.barcodeInput.inputMode = nextMode === "scanner" ? "none" : "numeric";
-  }
-
-  if (!(options && options.silent)) {
-    saveInputMode(nextMode);
-  }
-
-  if (!changed) {
-    return;
-  }
-
-  if (nextMode === "scanner") {
-    closeCapturePage();
-    setStatus("Scanner mode: use an external scanner");
-  } else {
-    setStatus("Ready to capture");
-  }
-
-  moveFocusToInput(state.els.barcodeInput);
-}
 
 ;
 // product.js
@@ -4301,11 +4241,69 @@ async function sendSavedPrintRequest(type, confirmedSignature) {
 let captureEnginePromise = null;
 let captureEngineLoaded = false;
 
+function warmCaptureEngine() {
+  // Compile in the worker after first paint, without opening camera hardware.
+  loadCaptureEngine().then(function () { return ensureZXingLoaded(); }).catch(function () {});
+}
+
+function requestCaptureStream(deviceId) {
+  const request = { generation: state.captureGeneration, stream: null, playback: null, promise: null };
+  state.captureRequest = request;
+  const video = { ...getActiveVideoConfig().video };
+  if (deviceId) {
+    delete video.facingMode;
+    video.deviceId = { exact: deviceId };
+  }
+  // Request permission synchronously in the original click, including on iOS.
+  let camera;
+  try {
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      throw new Error("Camera access requires HTTPS or localhost and a supported browser.");
+    }
+    camera = navigator.mediaDevices.getUserMedia({ audio: false, video: video });
+  } catch (error) {
+    camera = Promise.reject(error);
+  }
+  request.promise = camera.catch(function (error) {
+    if (!state.capturePageOpen || request.generation !== state.captureGeneration || document.hidden) throw error;
+    if (!["OverconstrainedError", "NotFoundError"].includes(error.name)) throw error;
+    return navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" } } });
+  }).then(function (stream) {
+    if (!state.capturePageOpen || state.captureRequest !== request || request.generation !== state.captureGeneration || document.hidden) {
+      stream.getTracks().forEach(function (track) { track.stop(); });
+      return { error: new DOMException("Capture closed", "AbortError") };
+    }
+    request.stream = stream;
+    const preview = state.els.cameraPreview;
+    preview.muted = true;
+    preview.playsInline = true;
+    preview.srcObject = stream;
+    // Show video independently of loading/compiling the decoder.
+    request.playback = preview.play().then(function () { return null; }, function (error) { return error; });
+    return { stream: stream };
+  }, function (error) { return { error: error }; });
+  return request;
+}
+
+function releaseCaptureHardware() {
+  const request = state.captureRequest;
+  state.captureRequest = null;
+  request?.stream?.getTracks().forEach(function (track) { track.stop(); });
+  if (captureEngineLoaded) {
+    clearResumePreviewTimer();
+    stopTracks();
+    setPreviewActive(false);
+  } else {
+    state.els.cameraPreview.pause();
+    state.els.cameraPreview.srcObject = null;
+  }
+}
+
 function loadCaptureEngine() {
   if (captureEnginePromise) return captureEnginePromise;
   captureEnginePromise = new Promise(function (resolve, reject) {
     const script = document.createElement("script");
-    script.src = "js/capture.bundle.js?v=117";
+    script.src = "js/capture.bundle.js?v=118";
     script.onload = function () {
       captureEngineLoaded = true;
       initRoiResize();
@@ -4323,8 +4321,9 @@ function loadCaptureEngine() {
 }
 
 async function openCapturePage() {
-  if (state.inputMode === "scanner" || state.capturePageOpen) return;
+  if (state.capturePageOpen) return;
   state.capturePageOpen = true;
+  state.captureFirstFrameMarked = false;
   const generation = ++state.captureGeneration;
   state.captureReturnFocus = document.activeElement;
   state.captureMainUrl = location.pathname + location.search + location.hash;
@@ -4336,6 +4335,8 @@ async function openCapturePage() {
   state.els.captureRetryBtn.hidden = true;
   state.els.previewPlaceholder.textContent = "Opening camera…";
   setStatus("Opening camera…");
+  performance.mark("webscanner-capture-request");
+  requestCaptureStream(state.activeDeviceId);
   try {
     await loadCaptureEngine();
     if (!state.capturePageOpen || generation !== state.captureGeneration) return;
@@ -4344,9 +4345,10 @@ async function openCapturePage() {
     await startScanning();
   } catch (error) {
     if (!state.capturePageOpen || generation !== state.captureGeneration || error.name === "AbortError") return;
-    await stopTracks();
-    setPreviewActive(false);
-    state.els.previewPlaceholder.textContent = isCameraPermissionError(error)
+    releaseCaptureHardware();
+    state.els.previewPlaceholder.hidden = false;
+    state.els.previewPlaceholder.style.display = "grid";
+    state.els.previewPlaceholder.textContent = ["NotAllowedError", "SecurityError"].includes(error.name)
       ? "Allow camera access in your browser, then tap Try again."
       : error.message || "Could not start the camera.";
     state.els.captureRetryBtn.hidden = false;
@@ -4358,13 +4360,7 @@ function closeCapturePage(options) {
   if (!state.capturePageOpen) return;
   state.capturePageOpen = false;
   state.captureGeneration += 1;
-  if (captureEngineLoaded) {
-    disarmFirstGestureCameraStart();
-    clearResumePreviewTimer();
-    // stopTracks releases every track synchronously before its promise resolves.
-    stopTracks();
-    setPreviewActive(false);
-  }
+  releaseCaptureHardware();
   state.els.capturePage.hidden = true;
   document.querySelector("main").inert = false;
   document.body.classList.remove("is-capturing");
@@ -4763,16 +4759,6 @@ function bindDeferredEvents() {
     toggleScreenScrollLock();
   });
 
-  state.els.inputModeSwitch.addEventListener("click", function (event) {
-    const btn = event.target.closest(".input-mode-option");
-    if (!btn) {
-      return;
-    }
-    setInputMode(btn.dataset.inputMode).catch(function (error) {
-      setStatus(error.message || "Could not switch input mode");
-    });
-  });
-
   state.els.settingsDialog.addEventListener("click", function (event) {
     if (event.target === state.els.settingsDialog) {
       closeSettingsDialog();
@@ -4952,7 +4938,13 @@ function bindDeferredEvents() {
 
   const markPreviewAsLive = function () {
     if (!document.hidden && state.capturePageOpen) {
-      setPreviewActive(true);
+      state.els.previewPlaceholder.hidden = true;
+      state.els.previewPlaceholder.style.display = "none";
+      if (captureEngineLoaded) setPreviewActive(true);
+      if (!state.captureFirstFrameMarked) {
+        state.captureFirstFrameMarked = true;
+        performance.mark("webscanner-camera-frame");
+      }
     }
   };
   
@@ -4966,12 +4958,11 @@ function bindDeferredEvents() {
   });
 
   document.addEventListener("visibilitychange", function () {
-    if (!state.capturePageOpen || !captureEngineLoaded) return;
+    if (!state.capturePageOpen) return;
     if (document.hidden) {
       // Release hardware when backgrounded; only resume an open capture page.
-      stopTracks();
-      setPreviewActive(false);
-    } else {
+      releaseCaptureHardware();
+    } else if (captureEngineLoaded) {
       scheduleQuickPreviewResumeCheck();
     }
   });
@@ -5112,12 +5103,8 @@ async function init() {
 
   initProductInfoSlider();
 
-  state.inputMode = loadInputMode();
-  document.body.classList.toggle("mode-scanner", state.inputMode === "scanner");
-  state.els.barcodeInput.inputMode = state.inputMode === "scanner" ? "none" : "numeric";
-  updateInputModeSwitchUi();
+  state.els.barcodeInput.inputMode = "numeric";
 
-  // ── Use the already-loaded scrollLockState (Optimization #4) ─────────────
   state.manualScrollLocked = scrollLockState.isLocked;
   state.manualScrollLockY = 0;
   updateLockScreenScrollButton();
@@ -5131,9 +5118,11 @@ async function init() {
   // Authentication refresh is already shared and handled on demand by api.js.
   state.activeDeviceId = readSavedCameraId() || "";
   state.els.scanBtn.disabled = false;
-  setStatus(state.inputMode === "scanner" ? "Scanner mode: use an external scanner" : "Ready to capture");
-  if (state.inputMode === "scanner") moveFocusToInput(state.els.barcodeInput);
+  setStatus("Ready to capture");
   performance.mark("webscanner-ready");
+  window.requestAnimationFrame(function () {
+    scheduleIdleWork(warmCaptureEngine, 500);
+  });
 }
 
 if (document.readyState === "loading") {
