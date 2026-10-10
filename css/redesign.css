@@ -57,6 +57,7 @@ body { background: var(--bg); }
 .field-value { font-size: .84rem; min-height: 1.2em; }
 .field-value:empty::before { content: "—"; color: #a4b0a8; }
 .pi-dots { margin-top: 8px; }
+.pi-dot::before { transition: none; }
 .pi-dot.is-active::before { background: var(--accent); }
 .history-head { margin-bottom: 8px; }
 .history-actions { gap: 8px; }

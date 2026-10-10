@@ -53,6 +53,12 @@ npm tarball integrity was verified during import. See the vendor README for the
 binary SHA-256. When changing deployed assets, bump `APP_VERSION` in `sw.js`
 and rebuild; asset URLs, the cache name, and the HTML version update together.
 
+Capture supports QR Code, Data Matrix, Aztec, and PDF417 alongside the existing
+linear barcodes. Both iPhone and Android use the same local WASM worker with
+rotation/inversion support and confirmation on two fresh camera frames.
+2D content is captured as text; product lookup still requires content that
+matches a product code. QR links are not opened automatically.
+
 Capture status labels stay compact in a fixed-height, single-line footer.
 Their font scales with viewport width; full diagnostic text remains in the
 status accessibility label/title and the error overlay. The retry button
@@ -72,6 +78,20 @@ python tests/test_capture.py
 python tests/test_camera_startup.py
 python tests/test_sales_period.py
 ```
+
+For 2D fixtures and mobile browser decoding checks:
+
+```powershell
+python -m pip install Pillow qrcode zxing-cpp
+python tests/test_2d_capture.py
+```
+
+These packages only generate test images; the webapp has no new runtime downloads.
+Use `--engine chromium` or `--engine webkit` to check a browser separately.
+The test covers four 2D formats, rotated/inverted/low-contrast images, Unicode QR
+content, empty frames, camera permissions, and Android camera capture fixtures.
+WebKit exercises real decoding with mocked permissions; physical phone camera
+autofocus and lighting still require device testing.
 
 Tests use installed Microsoft Edge, fake cameras, an independently encoded
 EAN-13 fixture, and stubbed product lookups. They never contact the live ERP.

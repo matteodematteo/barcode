@@ -184,53 +184,71 @@ function initProductInfoSlider() {
   }
 
   const dotButtons = Array.prototype.slice.call(dots.querySelectorAll(".pi-dot"));
+  let targetIndex = null;
+  let scrollFrame = 0;
 
-  function setActiveDot(index) {
+  function setActiveDot(index, force = false) {
     const changed = state.productInfoSlideIndex !== index;
     state.productInfoSlideIndex = index;
+    if (changed || force) {
+      dotButtons.forEach(function (dot, dotIndex) {
+        const isActive = dotIndex === index;
+        dot.classList.toggle("is-active", isActive);
+        dot.setAttribute("aria-selected", isActive ? "true" : "false");
+      });
+      if (changed) saveProductInfoSlideIndex(index);
+    }
     if (typeof syncSalesPerformanceRequests === "function") {
       syncSalesPerformanceRequests({ refresh: changed });
     }
-    dotButtons.forEach(function (dot, dotIndex) {
-      const isActive = dotIndex === index;
-      dot.classList.toggle("is-active", isActive);
-      dot.setAttribute("aria-selected", isActive ? "true" : "false");
-    });
   }
 
   function goToSlide(index, behavior) {
     const width = slider.clientWidth;
+    targetIndex = index;
     slider.scrollTo({ left: width * index, behavior: behavior || "smooth" });
   }
 
   dotButtons.forEach(function (dot) {
     dot.addEventListener("click", function () {
       const index = Number(dot.dataset.gotoSlide || 0);
-      goToSlide(index);
       setActiveDot(index);
-      saveProductInfoSlideIndex(index);
+      goToSlide(index);
     });
   });
 
-  let scrollTimer = null;
-  slider.addEventListener("scroll", function () {
-    if (scrollTimer) {
-      window.clearTimeout(scrollTimer);
+  function syncScrolledPage() {
+    scrollFrame = 0;
+    const width = slider.clientWidth;
+    if (!width) return;
+    // A tapped dot stays selected while smooth scrolling crosses other pages.
+    if (targetIndex !== null) {
+      if (Math.abs(slider.scrollLeft - width * targetIndex) > 1) return;
+      targetIndex = null;
     }
-    scrollTimer = window.setTimeout(function () {
-      const width = slider.clientWidth || 1;
-      const index = Math.min(dotButtons.length - 1, Math.max(0, Math.round(slider.scrollLeft / width)));
-      setActiveDot(index);
-      saveProductInfoSlideIndex(index);
-    }, 80);
-  }, { passive: true });
+    const index = Math.min(dotButtons.length - 1, Math.max(0, Math.round(slider.scrollLeft / width)));
+    setActiveDot(index);
+  }
+
+  function queueScrollSync() {
+    if (!scrollFrame) scrollFrame = window.requestAnimationFrame(syncScrolledPage);
+  }
+  slider.addEventListener("scroll", queueScrollSync, { passive: true });
+  slider.addEventListener("scrollend", queueScrollSync, { passive: true });
+  // A swipe, wheel, or keyboard action takes over any pending dot navigation.
+  ["pointerdown", "touchstart", "wheel", "keydown"].forEach(function (eventName) {
+    slider.addEventListener(eventName, function () {
+      targetIndex = null;
+      queueScrollSync();
+    }, { passive: true });
+  });
 
   document.addEventListener("visibilitychange", function () {
     if (typeof syncSalesPerformanceRequests === "function") syncSalesPerformanceRequests();
   });
 
   const savedIndex = Math.min(dotButtons.length - 1, Math.max(0, loadProductInfoSlideIndex()));
-  setActiveDot(savedIndex);
+  setActiveDot(savedIndex, true);
   if (savedIndex > 0) {
     window.requestAnimationFrame(function () {
       goToSlide(savedIndex, "auto");

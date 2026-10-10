@@ -36,7 +36,8 @@ function getActiveStreamTrackFromPreview() {
 
 const ZXING_FORMAT_MAP = {
   ean_13: "EAN13", ean_8: "EAN8", upc_a: "UPCA", upc_e: "UPCE",
-  code_128: "Code128", code_39: "Code39", codabar: "Codabar", itf: "ITF"
+  code_128: "Code128", code_39: "Code39", codabar: "Codabar", itf: "ITF",
+  qr_code: "QRCode", data_matrix: "DataMatrix", aztec: "Aztec", pdf417: "PDF417"
 };
 
 async function createDetector() {
@@ -965,8 +966,7 @@ async function captureAttempt(session) {
 
   if (!detectedText) {
     confirmAcrossFrames("");
-    // Easy labels finish at HD. Difficult/small labels get full sensor detail
-    // after two real attempts, without delaying the first preview frame.
+    // Keep scanning fresh 1080p frames with the next crop/detail pass.
     setStatus("Scanning barcode…");
     return false;
   }

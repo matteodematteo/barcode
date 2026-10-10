@@ -39,7 +39,11 @@ const CONFIG = {
       "code_128",
       "code_39",
       "codabar",
-      "itf"
+      "itf",
+      "qr_code",
+      "data_matrix",
+      "aztec",
+      "pdf417"
     ],
     detectionCropModes: ["expanded", "visible"],
     resultFields: [
