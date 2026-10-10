@@ -4,16 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f5f6f2" />
-  <meta name="webscanner-version" content="126" />
+  <meta name="webscanner-version" content="127" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Web Scanner" />
-  <link rel="manifest" href="manifest.webmanifest?v=126" />
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=126" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=126" />
+  <link rel="manifest" href="manifest.webmanifest?v=127" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=127" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=127" />
   <title>Web Barcode Scanner</title>
-  <link rel="preload" href="js/app.bundle.js?v=126" as="script" />
-  <link rel="preload" href="css/interface.bundle.css?v=126" as="style" />
+  <link rel="preload" href="js/app.bundle.js?v=127" as="script" />
+  <link rel="preload" href="css/interface.bundle.css?v=127" as="style" />
   <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
        round-trips for the above-the-fold shell (base + scanner + layout +
        essential components). The remaining interface styles load as one small sheet below. -->
@@ -370,13 +370,13 @@
   <!-- These sheets affect the visible page geometry. Keep them render-blocking so
        browsers paint the completed interface once instead of restyling sections
        progressively on a slow connection. -->
-  <link rel="stylesheet" href="css/interface.bundle.css?v=126" />
+  <link rel="stylesheet" href="css/interface.bundle.css?v=127" />
 </head>
 <body>
   <main class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=126" width="34" height="34" alt="" decoding="async" /></span>
+        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=127" width="34" height="34" alt="" decoding="async" /></span>
         <div><h1>Web Scanner</h1></div>
       </div>
       <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
@@ -699,12 +699,9 @@
         </label>
       </div>
       <div class="sales-period-shortcuts" role="group" aria-label="Quick sales periods">
+        <button class="btn btn-muted" type="button" data-sales-period-preset="today" aria-pressed="false">Today</button>
         <button class="btn btn-muted" type="button" data-sales-period-preset="last-30-days" aria-pressed="false">Last 30 days</button>
         <button class="btn btn-muted" type="button" data-sales-period-preset="last-90-days" aria-pressed="false">Last 90 days</button>
-        <button class="btn btn-muted" type="button" data-sales-period-preset="today" aria-pressed="false">Today</button>
-        <button class="btn btn-muted" type="button" data-sales-period-preset="this-month" aria-pressed="false">This month</button>
-        <button class="btn btn-muted" type="button" data-sales-period-preset="last-3-months" aria-pressed="false">Last 3 months</button>
-        <button class="btn btn-muted" type="button" data-sales-period-preset="this-year" aria-pressed="false">This year</button>
       </div>
       <div class="dialog-actions">
         <button class="btn btn-primary" id="salesPeriodApplyBtn" type="button">Apply</button>
@@ -787,6 +784,6 @@
     <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
   </div>
   <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
-  <script src="js/app.bundle.js?v=126" defer></script>
+  <script src="js/app.bundle.js?v=127" defer></script>
 </body>
 </html>

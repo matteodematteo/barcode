@@ -510,12 +510,6 @@ function getSalesQuickPeriod(preset, today = new Date()) {
   } else if (preset === "last-30-days" || preset === "last-90-days") {
     start = new Date(year, month, today.getDate());
     start.setDate(start.getDate() - (preset === "last-30-days" ? 29 : 89));
-  } else if (preset === "this-month") {
-    start = new Date(year, month, 1);
-  } else if (preset === "last-3-months") {
-    start = new Date(year, month - 2, 1);
-  } else if (preset === "this-year") {
-    start = new Date(year, 0, 1);
   } else {
     return null;
   }
