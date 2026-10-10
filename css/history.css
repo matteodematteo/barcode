@@ -15,7 +15,8 @@
 
   .history-details-control {
     display: grid;
-    place-items: center;
+    align-items: center;
+    justify-items: end;
   }
 
   .qty-pad-card {
