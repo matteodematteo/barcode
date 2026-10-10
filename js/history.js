@@ -14,15 +14,17 @@ function buildHistoryArticle(item, index) {
   if (index === state.selectedHistoryIndex) {
     article.classList.add("is-selected");
   }
+  const header = document.createElement("div");
+  header.className = "history-header";
   const primary = document.createElement("div");
   primary.className = "history-primary";
-  primary.innerHTML = `<span class="history-code">${escapeHtml(item.barcode || "")}</span><span class="history-qty">Qty ${escapeHtml(String(item.comparison_qty || 1))}</span>`;
+  primary.innerHTML = `<span class="history-code">${escapeHtml(item.barcode || "")}</span><span class="history-qty">x${escapeHtml(String(item.comparison_qty || 1))}</span>`;
+  primary.querySelector(".history-code").title = item.barcode || "";
 
-  const nameRow = document.createElement("div");
-  nameRow.className = "history-name-row";
   const name = document.createElement("div");
   name.className = "history-name";
   name.textContent = item.italian_name || "No name loaded";
+  name.title = name.textContent;
 
   const meta = document.createElement("div");
   meta.className = "history-meta";
@@ -33,14 +35,15 @@ function buildHistoryArticle(item, index) {
   const detailButton = document.createElement("button");
   detailButton.className = "btn btn-muted history-detail-btn";
   detailButton.type = "button";
-  detailButton.textContent = "Detail";
+  detailButton.textContent = "!";
+  detailButton.setAttribute("aria-label", "Product details");
+  detailButton.title = "Product details";
   detailButton.dataset.action = "detail";
   detailButton.dataset.index = String(index);
-  nameRow.appendChild(name);
-  nameRow.appendChild(detailButton);
-
-  article.appendChild(primary);
-  article.appendChild(nameRow);
+  header.appendChild(primary);
+  header.appendChild(detailButton);
+  article.appendChild(header);
+  article.appendChild(name);
   article.appendChild(meta);
   article.dataset.index = String(index);
   article.setAttribute("tabindex", "0");
@@ -54,9 +57,9 @@ function renderHistory() {
   state.els.sendTxtBtn.disabled = state.history.length === 0;
   state.els.printBtn.disabled = state.history.length === 0 && state.printRequests.length === 0;
   if (state.els.historyCountBadge) {
-    const countText = `Count: ${state.history.length}`;
+    const countText = `[${state.history.length}]`;
     state.els.historyCountBadge.textContent = countText;
-    state.els.historyCountBadge.setAttribute("aria-label", countText);
+    state.els.historyCountBadge.setAttribute("aria-label", `${state.history.length} records`);
   }
   if (state.history.length === 0) {
     state.selectedHistoryIndex = -1;

@@ -1,9 +1,21 @@
 .history-head {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    justify-content: flex-start;
+    gap: 8px;
     margin-bottom: 8px;
+  }
+
+  .history-count {
+    color: var(--muted);
+    font-size: 0.94rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .history-details-control {
+    display: grid;
+    place-items: center;
   }
 
   .qty-pad-card {
@@ -79,6 +91,11 @@
   }
 
   .history-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px 10px;
+    min-width: 0;
     padding: 10px 12px;
     border-radius: var(--radius-md);
     background: rgba(255, 255, 255, 0.68);
@@ -91,37 +108,48 @@
     transition: background-color 150ms ease, border-color 150ms ease, transform 150ms ease;
   }
 
+  .history-header {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
   .history-primary {
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
+    align-items: baseline;
     gap: 10px;
-    font-size: 0.96rem;
+    min-width: 0;
+    font-size: 1.04rem;
     font-weight: 800;
   }
 
   .history-code {
-    flex: 1;
+    flex: 0 1 auto;
     min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .history-qty {
+    flex: 0 0 auto;
     color: var(--accent-strong);
     font-size: 0.74rem;
-    font-weight: 800;
+    font-weight: 400;
     white-space: nowrap;
   }
 
-  .history-name-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-top: 4px;
-  }
-
   .history-name {
-    flex: 1;
+    grid-column: 1;
+    grid-row: 2;
     min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     color: var(--muted);
     font-size: 0.72rem;
     line-height: 1.28;
@@ -129,9 +157,11 @@
   }
 
   .history-meta {
+    grid-column: 2;
+    grid-row: 2;
+    min-width: 0;
     display: flex;
     gap: 14px;
-    margin-top: 8px;
     color: var(--text);
     font-size: 0.73rem;
     font-weight: 700;
@@ -168,18 +198,31 @@
     display: block;
   }
 
+  body.show-history-details .history-name {
+    grid-column: 1 / -1;
+  }
+
+  body.show-history-details .history-meta {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
+
   .history-price.is-discount {
     color: #b42318;
     font-weight: 800;
   }
 
   .history-detail-btn {
+    display: grid;
+    place-items: center;
     min-height: 32px;
-    width: auto;
-    padding: 0 10px;
-    margin-left: auto;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    margin-left: 0;
     margin-right: 0;
-    font-size: 0.72rem;
+    font-size: 1rem;
+    line-height: 1;
     border-radius: 999px;
     flex: 0 0 auto;
   }

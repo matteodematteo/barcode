@@ -4,16 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f5f6f2" />
-  <meta name="webscanner-version" content="131" />
+  <meta name="webscanner-version" content="135" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Web Scanner" />
-  <link rel="manifest" href="manifest.webmanifest?v=131" />
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=131" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=131" />
+  <link rel="manifest" href="manifest.webmanifest?v=135" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=135" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=135" />
   <title>Web Barcode Scanner</title>
-  <link rel="preload" href="js/app.bundle.js?v=131" as="script" />
-  <link rel="preload" href="css/interface.bundle.css?v=131" as="style" />
+  <link rel="preload" href="js/app.bundle.js?v=135" as="script" />
+  <link rel="preload" href="css/interface.bundle.css?v=135" as="style" />
   <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
        round-trips for the above-the-fold shell (base + scanner + layout +
        essential components). The remaining interface styles load as one small sheet below. -->
@@ -236,11 +236,11 @@
     }
     .price-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 5px; }
     .price-card-heading label { margin-bottom: 0; }
-    .btn.history-details-switch { display: grid; place-items: center; padding: 0; min-height: 20px; height: 20px; width: 36px; flex: 0 0 36px; border-radius: 999px; }
-    .history-details-switch-track { display: block; width: 30px; height: 18px; border-radius: 999px; background: rgba(20,28,36,.22); padding: 2px; box-sizing: border-box; }
-    .history-details-switch-thumb { display: block; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform 150ms ease; }
+    .btn.history-details-switch { display: grid; place-items: center; padding: 0; border: 0; min-height: 20px; height: 20px; width: 36px; flex: 0 0 36px; border-radius: 999px; }
+    .history-details-switch-track { display: block; width: 100%; height: 100%; border-radius: 999px; background: rgba(20,28,36,.22); padding: 2px; box-sizing: border-box; }
+    .history-details-switch-thumb { display: block; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform 150ms ease; }
     .history-details-switch[aria-checked="true"] .history-details-switch-track { background: rgba(255,255,255,.35); }
-    .history-details-switch[aria-checked="true"] .history-details-switch-thumb { transform: translateX(12px); }
+    .history-details-switch[aria-checked="true"] .history-details-switch-thumb { transform: translateX(16px); }
     .manual-entry-add { display: none; }
     .floating-action-btn {
       position: fixed; top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right));
@@ -370,13 +370,13 @@
   <!-- These sheets affect the visible page geometry. Keep them render-blocking so
        browsers paint the completed interface once instead of restyling sections
        progressively on a slow connection. -->
-  <link rel="stylesheet" href="css/interface.bundle.css?v=131" />
+  <link rel="stylesheet" href="css/interface.bundle.css?v=135" />
 </head>
 <body>
   <main class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=131" width="34" height="34" alt="" decoding="async" /></span>
+        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=135" width="34" height="34" alt="" decoding="async" /></span>
         <div><h1>Web Scanner</h1></div>
       </div>
       <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
@@ -438,7 +438,7 @@
               <div class="field-card pi-w-40" id="field_real_inventory_card"><label for="field_real_inventory">Inventory</label><div class="field-value" id="field_real_inventory"></div></div>
             </div>
             <div class="pi-row">
-              <div class="field-card pi-w-33" id="field_s_price_card"><div class="price-card-heading"><label for="field_s_price">Price</label><button class="btn btn-muted history-details-switch" id="historyDetailsSwitch" type="button" role="switch" aria-checked="false" aria-label="Show cost and supplier in history" title="Show cost and supplier in history"><span class="history-details-switch-track" aria-hidden="true"><span class="history-details-switch-thumb"></span></span></button></div><div class="field-value" id="field_s_price"></div></div>
+              <div class="field-card pi-w-33" id="field_s_price_card"><div class="price-card-heading"><label for="field_s_price">Price</label></div><div class="field-value" id="field_s_price"></div></div>
               <div class="field-card pi-w-33" id="field_discount_price_card" hidden><label for="field_discount_price">Disc. Price</label><div class="field-value is-discount" id="field_discount_price"></div></div>
               <div class="field-card pi-w-33" id="field_disc_price_percent_card" hidden><label for="field_disc_price_percent">D. Price%</label><div class="field-value is-discount" id="field_disc_price_percent"></div></div>
             </div>
@@ -522,11 +522,12 @@
     <section class="card section-card">
       <div class="history-head">
         <h2 id="historyTitle">Capture list</h2>
+        <span class="history-count" id="historyCountBadge" aria-live="polite">[0]</span>
       </div>
       <div class="history-actions">
         <button class="btn btn-muted" id="clearSelectedBtn" type="button" disabled>Delete selected</button>
         <button class="btn btn-muted" id="clearAllBtn" type="button">Clear list</button>
-        <div class="mini-pill" id="historyCountBadge" aria-live="polite">Count: 0</div>
+        <div class="history-details-control"><button class="btn btn-muted history-details-switch" id="historyDetailsSwitch" type="button" role="switch" aria-checked="false" aria-label="Show cost and supplier in history" title="Show cost and supplier in history"><span class="history-details-switch-track" aria-hidden="true"><span class="history-details-switch-thumb"></span></span></button></div>
         <button class="btn btn-primary" id="printBtn" type="button">Print</button>
       </div>
       <div class="history-list" id="historyList" aria-live="polite">
@@ -784,6 +785,6 @@
     <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
   </div>
   <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
-  <script src="js/app.bundle.js?v=131" defer></script>
+  <script src="js/app.bundle.js?v=135" defer></script>
 </body>
 </html>
