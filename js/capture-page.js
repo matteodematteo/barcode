@@ -32,7 +32,8 @@ function requestCaptureStream(deviceId) {
   request.promise = camera.catch(function (error) {
     if (!state.capturePageOpen || request.generation !== state.captureGeneration || document.hidden) throw error;
     if (!["OverconstrainedError", "NotFoundError"].includes(error.name)) throw error;
-    request.videoConstraints = { facingMode: { ideal: "environment" } };
+    // Retry an unavailable saved camera without changing the requested quality.
+    request.videoConstraints = { ...CONFIG.cameraStartupVideo };
     return navigator.mediaDevices.getUserMedia({ audio: false, video: request.videoConstraints });
   }).then(function (stream) {
     if (!state.capturePageOpen || state.captureRequest !== request || request.generation !== state.captureGeneration || document.hidden) {
@@ -69,7 +70,7 @@ function loadCaptureEngine() {
   if (captureEnginePromise) return captureEnginePromise;
   captureEnginePromise = new Promise(function (resolve, reject) {
     const script = document.createElement("script");
-    script.src = "js/capture.bundle.js?v=123";
+    script.src = "js/capture.bundle.js?v=124";
     script.onload = function () {
       captureEngineLoaded = true;
       initRoiResize();

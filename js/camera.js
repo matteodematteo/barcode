@@ -967,7 +967,6 @@ async function captureAttempt(session) {
     confirmAcrossFrames("");
     // Easy labels finish at HD. Difficult/small labels get full sensor detail
     // after two real attempts, without delaying the first preview frame.
-    if (state.detectionAttempt >= 2) requestHighResolutionCapture(state.track);
     setStatus("Scanning barcode…");
     return false;
   }
@@ -1081,7 +1080,6 @@ async function startCameraStream(preferredCameraId) {
 const cameraFocusStates = new WeakMap();
 const cameraConstraintQueues = new WeakMap();
 const cameraTrackConstraints = new WeakMap();
-const highResolutionTracks = new WeakSet();
 
 function isCurrentCameraTrack(track) {
   return Boolean(track && track === state.track && track.readyState !== "ended" &&
@@ -1089,7 +1087,7 @@ function isCurrentCameraTrack(track) {
 }
 
 
-function applyCameraTrackConstraints(track, changes, basic = false) {
+function applyCameraTrackConstraints(track, changes) {
   // applyConstraints replaces the previous constraints. Keep the current
   // resolution, frame rate and torch, and serialize focus/torch changes.
   const previous = cameraConstraintQueues.get(track) || Promise.resolve();
@@ -1107,39 +1105,14 @@ function applyCameraTrackConstraints(track, changes, basic = false) {
       keys.forEach((key) => { delete kept[key]; });
       return kept;
     }).filter((entry) => Object.keys(entry).length);
-    next.advanced = basic ? advanced : [...advanced, changes];
-    if (basic) Object.assign(next, changes);
-    const appliedConstraints = { ...next };
-    // Chromium can route a mixed request to image-capture controls and ignore
-    // its video dimensions. Change resolution separately, then restore focus.
-    if (basic) delete appliedConstraints.advanced;
-    await track.applyConstraints(appliedConstraints);
+    next.advanced = [...advanced, changes];
+    await track.applyConstraints(next);
     if (!isCurrentCameraTrack(track)) return false;
     cameraTrackConstraints.set(track, next);
     return true;
   });
   cameraConstraintQueues.set(track, pending);
   return pending;
-}
-
-
-function requestHighResolutionCapture(track) {
-  if (!isCurrentCameraTrack(track) || !track.applyConstraints || highResolutionTracks.has(track)) return;
-  highResolutionTracks.add(track);
-  const settings = track.getSettings?.() || {};
-  if (Math.max(settings.width || 0, settings.height || 0) >= 1920 &&
-      Math.min(settings.width || 0, settings.height || 0) >= 1080) return;
-  const quality = getActiveVideoConfig().video;
-  // Use the same track and constraint queue as focus/torch. Unsupported full
-  // HD leaves the working HD stream intact, with no second permission request.
-  applyCameraTrackConstraints(track, {
-    width: quality.width,
-    height: quality.height
-  }, true).then(function (applied) {
-    if (!applied) return;
-    updateResolutionBadge();
-    scheduleFocusRefresh(track);
-  }).catch(function () {});
 }
 
 

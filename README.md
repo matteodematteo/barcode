@@ -38,10 +38,9 @@ mode. The main screen requests one core script and one stylesheet. Camera code
 and the decoder warm after first paint, without requesting camera permission.
 Capture requests hardware synchronously in the button's click, in parallel with
 any remaining code loading, and shows video before decoding is ready.
-The initial request prefers 1280×720 with no forced aspect ratio or software
-resize mode. Custom focus constraints run after playback begins. After two
-unsuccessful reads, the existing track requests 1920×1080 detail in the background;
-unsupported resolution changes leave the working preview intact. Pointer/focus
+The initial request prefers 1920×1080 with no forced aspect ratio or software
+resize mode. There is no resolution switch during scanning. Custom focus
+constraints run after playback begins and preserve the requested resolution. Pointer/focus
 on Capture also warms the decoder without opening hardware.
 The decoder runs in a worker and transfers pixel buffers without
 blocking the interface. The worker stays ready for subsequent captures. Saved
@@ -76,7 +75,7 @@ repeat capture, cancellation during permissions, Back/Escape, denied permissions
 camera release, and installed offline startup/capture. Screenshots and fixtures
 are written to the system temporary `webscanner-qa` directory.
 The startup check also holds the camera bundle back to verify early preview,
-checks real resolution changes on one stream, and covers rejected/canceled upgrades.
+checks full-HD startup and stable resolution on one stream, and covers canceled focus/torch changes.
 
 For Android emulation and WebKit with an iPhone viewport/user agent:
 

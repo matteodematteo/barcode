@@ -41,10 +41,10 @@ body { background: var(--bg); }
 .btn-muted { background: #f1f4ef; border-color: transparent; }
 .btn:hover { transform: none; }
 .btn:focus-visible, .fab:focus-visible { outline: 3px solid #94c9b3; outline-offset: 3px; }
-.helper-row { margin-top: 8px; grid-template-columns: 46px minmax(60px, .55fr) minmax(0, 1.45fr) 0; column-gap: 0; }
-.manual-entry-lock { width: 46px; min-width: 46px; max-width: 46px; height: 44px; min-height: 44px; }
-.manual-entry-qty { height: 44px; border-color: var(--panel-line); }
-#scanBtn { height: 44px; margin-left: 12px; width: calc(100% - 12px); border-radius: 12px; font-size: .88rem; }
+.helper-row { margin-top: 8px; grid-template-columns: 44px minmax(64px, 80px) minmax(0, 1fr); gap: 8px; }
+.manual-entry-lock { width: 44px; min-width: 44px; max-width: 44px; height: 44px; min-height: 44px; border-radius: 12px; }
+.manual-entry-qty { height: 44px; border: 1px solid var(--panel-line); border-radius: 12px; }
+#scanBtn { grid-column: 3; height: 44px; margin-left: 0; width: 100%; border-radius: 12px; font-size: .88rem; }
 #scanBtn::before { content: ""; display: inline-block; width: 17px; height: 13px; margin-right: 9px; vertical-align: -2px; border: 1.8px solid currentColor; border-radius: 4px; }
 .status-row { display: flex; align-items: center; gap: 8px; min-height: 18px; margin-top: 6px; }
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
@@ -103,7 +103,7 @@ body.is-capturing { overflow: hidden; }
   .field-card { padding: 7px 9px; }
   .field-value { font-size: .82rem; }
   .history-actions .btn { font-size: .65rem; }
-  .helper-row { gap: 0; }
+  .helper-row { gap: 8px; }
 }
 
 .product-details { margin-top: 8px; }
