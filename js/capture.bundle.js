@@ -8,7 +8,7 @@
   let worker = null;
   let pending = null;
   let sequence = 0;
-  const workerUrl = new URL("zxing-worker.js?v=118", document.currentScript.src);
+  const workerUrl = new URL("zxing-worker.js?v=120", document.currentScript.src);
 
   window.ensureZXingLoaded = function () {
     if (readyPromise) return readyPromise;

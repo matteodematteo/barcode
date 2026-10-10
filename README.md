@@ -69,3 +69,13 @@ The Android test captures a real barcode from fake video. WebKit checks the
 iOS constraints, inline video, gesture and denied-permission paths, compact
 layout, and actual worker/WASM decoding. WebKit's Windows port uses a mocked
 camera permission API; these checks do not replace physical phone testing.
+
+To check the update notice and Reload flow (starts its own local server):
+
+```powershell
+python tests/test_updates.py
+```
+
+This installs a previous release, serves the current release under the same
+subfolder, and verifies that Reload appears. It checks new CSS/JS loading,
+preserved input drafts and saved data, and offline decoder initialization.
