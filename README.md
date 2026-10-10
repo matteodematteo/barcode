@@ -72,9 +72,8 @@ Their font scales with viewport width; full diagnostic text remains in the
 status accessibility label/title and the error overlay. The retry button
 overlays the preview, so showing it cannot shrink the camera view.
 
-Sales Period offers Today, Last 30 days, and Last 90 days.
-Last 30 days is the initial default; the matching preset is highlighted
-and focused when opening the dialog. Clean clears both dates before Apply.
+Sales Period uses manual Start and End date fields, with Apply, Clean, and Back.
+Last 30 days remains the initial date range. Clean clears both dates before Apply.
 
 Capture-list actions use compact Delete, Clear list, and Print buttons, followed
 by a green **+ More** control. Its active switch is pale yellow (RGB 255, 244, 202).
