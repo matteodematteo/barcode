@@ -141,7 +141,8 @@ function extractCookieFromResponse(payload) {
 }
 
 
-async function loginAndRefreshCookie(settingsOverride) {
+async function loginAndRefreshCookie(settingsOverride, options = {}) {
+  const silent = options.silent === true;
   const settings = settingsOverride || readSavedSettings();
   const shopKey = (settings.shopKey || "").trim();
   const login = (settings.login || "").trim();
@@ -150,9 +151,11 @@ async function loginAndRefreshCookie(settingsOverride) {
 
   if (!shopKey || !login || !password) {
     const message = "Fill shop key, login, and password first.";
-    state.els.settingsSaveNote.textContent = message;
-    saveCookieState(state.authCookie, message);
-    setStatus(message);
+    if (!silent) {
+      state.els.settingsSaveNote.textContent = message;
+      saveCookieState(state.authCookie, message);
+      setStatus(message);
+    }
     return "";
   }
 
@@ -161,18 +164,21 @@ async function loginAndRefreshCookie(settingsOverride) {
   params.set("login_name", login);
   params.set("password", password);
 
-  state.els.settingsSaveNote.textContent = `Sending login request for ${login} on ${targetSite}...`;
   saveCookieState(state.authCookie, `Refreshing cookie for ${login} on ${targetSite}...`);
-  setStatus("Requesting new cookie...");
+  if (!silent) {
+    state.els.settingsSaveNote.textContent = `Sending login request for ${login} on ${targetSite}...`;
+    setStatus("Requesting new cookie...");
+  }
 
   const response = await apiFetch(CONFIG.cookieProxyEndpoint, {
     method: "POST",
+    signal: options.signal,
     body: params.toString(),
     headers: {
       Accept: "application/json, text/plain, */*",
       "Content-Type": "application/x-www-form-urlencoded"
     }
-  });
+  }, { trackLoader: !silent });
 
   if (!response.ok) {
     throw new Error(`Proxy request failed with status ${response.status}`);
@@ -192,10 +198,61 @@ async function loginAndRefreshCookie(settingsOverride) {
   }
 
   saveCookieState(cookie, `Cookie refreshed successfully for ${login} on ${targetSite}.`);
-  state.els.settingsSaveNote.textContent = "Login completed and cookie saved.";
-  setStatus("Cookie refreshed");
+  if (!silent) {
+    state.els.settingsSaveNote.textContent = "Login completed and cookie saved.";
+    setStatus("Cookie refreshed");
+  }
   return cookie;
 }
+
+// Refresh saved login on launch/resume without blocking the app or camera.
+function initAutomaticLoginRefresh() {
+  let needsRefresh = true;
+  let wasInactive = false;
+
+  function refresh() {
+    if (!needsRefresh || document.hidden || navigator.onLine === false) return;
+    const settings = readSavedSettings();
+    if (!String(settings.shopKey || "").trim() || !String(settings.login || "").trim() || !settings.password) return;
+    needsRefresh = false;
+    const controller = new AbortController();
+    // A stalled background login must not hold future product requests forever.
+    const timeout = window.setTimeout(() => controller.abort(), 15000);
+    refreshCookieForRequests(undefined, { silent: true, signal: controller.signal })
+      .catch(function (error) {
+        needsRefresh = true;
+        saveCookieState(state.authCookie, `Automatic login refresh failed: ${error.message || "Request failed"}`);
+      }).finally(function () { window.clearTimeout(timeout); });
+  }
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      needsRefresh = true;
+      wasInactive = true;
+    } else {
+      wasInactive = false;
+      refresh();
+    }
+  });
+  window.addEventListener("blur", function () { wasInactive = true; });
+  window.addEventListener("focus", function () {
+    if (wasInactive) needsRefresh = true;
+    wasInactive = false;
+    refresh();
+  });
+  window.addEventListener("pageshow", function (event) {
+    if (!event.persisted) return;
+    needsRefresh = true;
+    wasInactive = false;
+    refresh();
+  });
+  window.addEventListener("online", function () {
+    needsRefresh = true;
+    refresh();
+  });
+  refresh();
+}
+
 
 function saveScrollLockState(isLocked, position) {
   const payload = {

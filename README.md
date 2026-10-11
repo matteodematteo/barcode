@@ -47,7 +47,9 @@ constraints run after playback begins and preserve the requested resolution. Poi
 on Capture also warms the decoder without opening hardware.
 The decoder runs in a worker and transfers pixel buffers without
 blocking the interface. The worker stays ready for subsequent captures. Saved
-authentication refreshes when a product request needs it. The service worker
+authentication refreshes in the background on startup, when the app reopens,
+and after reconnecting. Product requests share an in-flight refresh; startup and
+capture stay usable while login completes. The service worker
 registers after initial paint, caches capture assets for offline use, and serves
 installed navigation immediately while refreshing HTML in the background.
 
@@ -62,7 +64,11 @@ checksum-validated ITF-14. QR, Data Matrix, Aztec, and PDF417 are disabled.
 EAN and GS1-128 remain 1D symbologies; omnidirectional image scanning means the
 label can be horizontal, vertical, or diagonal. A failed full-preview read gets
 an estimated-angle correction in the worker, with additional angle passes for
-cluttered backgrounds. Successful ordinary reads skip this extra processing.
+cluttered backgrounds. Barcode regions are located again on each frame;
+enlargement, rotation and lighting correction prefer those small regions.
+Whole-preview reads still cover larger labels and background clutter. Optional
+fallbacks yield to fresh frames after their work budget instead of processing
+all heavy retries on a moving frame. Successful ordinary reads skip extra work.
 Android and iPhone share the same typed-array implementation, without requiring
 OffscreenCanvas or native BarcodeDetector. Capture keeps its 1080p stream and
 requires two matching fresh frames before returning to the main page.

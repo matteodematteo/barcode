@@ -516,7 +516,7 @@ function getSquareCropSize(video) {
 
 
 function getDetectionCropModes() {
-  return ["expanded", "detail", "visible", "visible"];
+  return ["visible", "expanded", "visible", "visible"];
 }
 
 
@@ -809,10 +809,12 @@ async function detectBarcodeInFrame() {
   const text = await detector.detect(image,
     CONFIG.detectorFormats.map((format) => ZXING_FORMAT_MAP[format]).filter(Boolean),
     { thorough: pass.thorough, enhance: pass.enhance, orientation: pass.orientation,
-      downscale: pass.mode === "visible", minLineCount: pass.mode === "detail" ? 4 : 2 });
+      downscale: pass.mode === "visible", minLineCount: 2,
+      focused: pass.focused, budgetMs: 80, binarizer: pass.binarizer,
+      regionOffset: pass.regionOffset });
   if (session === state.scanSession) {
     state.detectionAttempt = attempt + 1;
-    if (text) state.lastDetectionPass = pass;
+    state.lastDetectionPass = text ? pass : null;
   }
   return text;
 }
@@ -826,6 +828,11 @@ function makeDetectionPass(attempt) {
     // start immediately; expensive contrast retries only run every fourth pass.
     thorough: true,
     enhance: phase === 3,
+    // Periodic whole-preview reads and rotating candidate priority prevent
+    // background text from starving another barcode region.
+    focused: phase !== 2,
+    regionOffset: attempt,
+    binarizer: phase === 1 ? "FixedThreshold" : "LocalAverage",
     orientation: phase === 3
       ? [45, 15, -15, 30, -30][Math.floor(attempt / 4) % 5] : "auto"
   };
@@ -985,6 +992,11 @@ async function captureAttempt(session) {
 
   if (!detectedText) {
     confirmAcrossFrames("");
+    // Single-shot-only cameras otherwise retain focus at the previous distance.
+    const focus = cameraFocusStates.get(state.track);
+    if (focus?.mode === "single-shot" && Date.now() - focus.updatedAt >= 700) {
+      requestFocusRefresh(state.track, { force: true }).catch(() => {});
+    }
     // Keep scanning fresh 1080p frames with the next crop/detail pass.
     setStatus("Scanning barcode…");
     return false;

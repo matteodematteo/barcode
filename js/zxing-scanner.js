@@ -6,7 +6,7 @@
   let worker = null;
   let pending = null;
   let sequence = 0;
-  const workerUrl = new URL("zxing-worker.js?v=139", document.currentScript.src);
+  const workerUrl = new URL("zxing-worker.js?v=141", document.currentScript.src);
 
   window.ensureZXingLoaded = function () {
     if (readyPromise) return readyPromise;
@@ -51,7 +51,10 @@
                   worker.postMessage({ id, buffer: image.data.buffer, width: image.width,
                     height: image.height, formats, thorough: options.thorough !== false,
                     enhance: options.enhance !== false, orientation: options.orientation || 0,
-                    downscale: options.downscale !== false, minLineCount: options.minLineCount || 2 }, [image.data.buffer]);
+                    downscale: options.downscale !== false, minLineCount: options.minLineCount || 2,
+                    focused: options.focused === true, budgetMs: options.budgetMs || 0,
+                    regionOffset: options.regionOffset || 0,
+                    binarizer: options.binarizer || "LocalAverage" }, [image.data.buffer]);
                 } catch (error) {
                   fail(error);
                 }

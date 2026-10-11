@@ -101,12 +101,12 @@ function estimateBarcodeRotation(pixels) {
 }
 
 // Pure typed arrays also work on iOS versions without OffscreenCanvas.
-function rotateBarcodePixels(pixels, angle) {
+function rotateBarcodePixels(pixels, angle, enlargement = 1) {
   const radians = angle * Math.PI / 180;
   const cos = Math.cos(radians), sin = Math.sin(radians);
   const rotatedWidth = Math.abs(pixels.width * cos) + Math.abs(pixels.height * sin);
   const rotatedHeight = Math.abs(pixels.width * sin) + Math.abs(pixels.height * cos);
-  const scale = Math.min(1, 1920 / Math.max(rotatedWidth, rotatedHeight));
+  const scale = Math.min(enlargement, 1920 / Math.max(rotatedWidth, rotatedHeight));
   const width = Math.ceil(rotatedWidth * scale), height = Math.ceil(rotatedHeight * scale);
   const output = new ImageData(width, height);
   const source = new Uint8Array(pixels.width * pixels.height);
@@ -148,14 +148,122 @@ function isAcceptedBarcode(result) {
   return true;
 }
 
-async function readBarcodePixels(pixels, options) {
-  let results = await ZXingWASM.readBarcodes(pixels, options);
-  if (options.tryHarder && !results.some(isAcceptedBarcode)) {
-    // Edge sharpening in the adaptive linear reader can erase near-pixel-wide
-    // bars. A plain threshold preserves them; require extra matching scan rows.
+// Locate concentrated parallel edges before resizing/rotating an entire frame.
+// Every frame is located independently so changes in distance cannot leave a
+// stale crop. All pixel processing stays in this worker (including on iOS).
+function findBarcodeRegions(pixels) {
+  const { width, height, data } = pixels;
+  const tile = 32, cols = Math.ceil(width / tile), rows = Math.ceil(height / tile);
+  const active = new Uint8Array(cols * rows), scores = new Float32Array(active.length);
+  let darkest = 255, lightest = 0;
+  const luma = (i) => (data[i] * 77 + data[i + 1] * 150 + data[i + 2] * 29) >> 8;
+  for (let ty = 0; ty < rows; ty++) {
+    for (let tx = 0; tx < cols; tx++) {
+      let xx = 0, yy = 0, xy = 0, magnitude = 0, count = 0;
+      for (let y = Math.max(1, ty * tile); y < Math.min(height - 1, (ty + 1) * tile); y += 4) {
+        for (let x = Math.max(1, tx * tile); x < Math.min(width - 1, (tx + 1) * tile); x += 4) {
+          const i = (y * width + x) * 4, value = luma(i);
+          darkest = Math.min(darkest, value); lightest = Math.max(lightest, value);
+          const gx = luma(i + 4) - luma(i - 4);
+          const gy = luma(i + width * 4) - luma(i - width * 4);
+          xx += gx * gx; yy += gy * gy; xy += gx * gy;
+          magnitude += Math.abs(gx) + Math.abs(gy); count++;
+        }
+      }
+      const energy = xx + yy;
+      const coherence = energy ? Math.hypot(xx - yy, 2 * xy) / energy : 0;
+      const index = ty * cols + tx;
+      if (count && magnitude / count >= 8 && coherence >= 0.35) {
+        active[index] = 1; scores[index] = energy;
+      }
+    }
+  }
+  const regions = [];
+  for (let start = 0; start < active.length; start++) {
+    if (!active[start]) continue;
+    const queue = [start]; active[start] = 0;
+    let left = cols, right = 0, top = rows, bottom = 0, score = 0;
+    for (let next = 0; next < queue.length; next++) {
+      const index = queue[next], x = index % cols, y = Math.floor(index / cols);
+      left = Math.min(left, x); right = Math.max(right, x + 1);
+      top = Math.min(top, y); bottom = Math.max(bottom, y + 1); score += scores[index];
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
+        const neighbor = ny * cols + nx;
+        if (active[neighbor]) { active[neighbor] = 0; queue.push(neighbor); }
+      }
+    }
+    if (queue.length < 2) continue;
+    const padding = Math.max(24, Math.ceil(Math.max(right - left, bottom - top) * tile * 0.12));
+    const x = Math.max(0, left * tile - padding), y = Math.max(0, top * tile - padding);
+    const w = Math.min(width, right * tile + padding) - x;
+    const h = Math.min(height, bottom * tile + padding) - y;
+    if (w * h >= width * height * 0.8) continue;
+    regions.push({ x, y, width: w, height: h, score: score / Math.sqrt(w * h) });
+  }
+  regions.sort((a, b) => b.score - a.score);
+  let hasContrast = lightest > darkest;
+  if (!hasContrast) {
+    // A coarse grid must never discard a thin label between sample points.
+    const reference = luma(0);
+    for (let i = 4; i < data.length; i += 4) {
+      if (luma(i) !== reference) { hasContrast = true; break; }
+    }
+  }
+  return { regions: regions.slice(0, 4), hasContrast };
+}
+
+function cropBarcodePixels(pixels, rect) {
+  const output = new ImageData(rect.width, rect.height);
+  for (let y = 0; y < rect.height; y++) {
+    const start = ((rect.y + y) * pixels.width + rect.x) * 4;
+    output.data.set(pixels.data.subarray(start, start + rect.width * 4), y * rect.width * 4);
+  }
+  return output;
+}
+
+async function readBarcodePixels(pixels, options, deadline = Infinity) {
+  const initialOptions = options.binarizer === "FixedThreshold"
+    ? { ...options, minLineCount: Math.ceil(options.minLineCount * 1.5) } : options;
+  let results = await ZXingWASM.readBarcodes(pixels, initialOptions);
+  if (options.tryHarder && options.binarizer !== "FixedThreshold" &&
+      !results.some(isAcceptedBarcode) && performance.now() < deadline) {
+    // Plain threshold preserves thin bars; require extra matching scan rows.
     results = await ZXingWASM.readBarcodes(pixels, {
       ...options, binarizer: "FixedThreshold", minLineCount: Math.ceil(options.minLineCount * 1.5)
     });
+  }
+  return results;
+}
+
+async function decodeBarcodePixels(pixels, options, data, deadline) {
+  let results = await readBarcodePixels(pixels, options, deadline);
+  if (data.orientation && !results.some(isAcceptedBarcode) && performance.now() < deadline) {
+    const angle = data.orientation === "auto" ? estimateBarcodeRotation(pixels) : Number(data.orientation);
+    if (Number.isFinite(angle) && angle) {
+      const rotated = rotateBarcodePixels(pixels, angle);
+      const rotatedOptions = { ...options, tryHarder: true };
+      results = await readBarcodePixels(rotated, rotatedOptions, deadline);
+      if (data.thorough !== false && !results.some(isAcceptedBarcode) && performance.now() < deadline) {
+        invertPixels(rotated);
+        results = await readBarcodePixels(rotated, rotatedOptions, deadline);
+      }
+    }
+  }
+  if (data.thorough !== false && !results.some(isAcceptedBarcode) && performance.now() < deadline) {
+    invertPixels(pixels);
+    results = await readBarcodePixels(pixels, options, deadline);
+    if (data.enhance !== false && !results.some(isAcceptedBarcode) && performance.now() < deadline) {
+      invertPixels(pixels);
+      if (prepareContrast(pixels)) {
+        const enhancedOptions = { ...options, binarizer: "FixedThreshold", minLineCount: Math.ceil(options.minLineCount * 1.5) };
+        results = await ZXingWASM.readBarcodes(enhanceContrast(pixels), enhancedOptions);
+        if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+          results = await ZXingWASM.readBarcodes(enhanceContrast(pixels, true), enhancedOptions);
+        }
+      }
+    }
   }
   return results;
 }
@@ -172,40 +280,41 @@ self.onmessage = async ({ data }) => {
       tryDownscale: data.downscale !== false,
       maxNumberOfSymbols: 1,
       textMode: "Plain",
-      minLineCount: Math.max(2, data.minLineCount || 2)
+      minLineCount: Math.max(2, data.minLineCount || 2),
+      binarizer: data.binarizer || "LocalAverage"
     };
-    let results = await readBarcodePixels(pixels, options);
-    if (data.orientation && !results.some(isAcceptedBarcode)) {
-      const angle = data.orientation === "auto" ? estimateBarcodeRotation(pixels) : Number(data.orientation);
-      if (Number.isFinite(angle) && angle) {
-        const rotated = rotateBarcodePixels(pixels, angle);
-        const rotatedOptions = { ...options, tryHarder: true };
-        results = await readBarcodePixels(rotated, rotatedOptions);
-        if (data.thorough !== false && !results.some(isAcceptedBarcode)) {
-          invertPixels(rotated);
-          results = await readBarcodePixels(rotated, rotatedOptions);
-        }
-      }
-    }
-    // ZXing's tryInvert applies to matrix codes. Also support light bars on
-    // dark labels for the linear formats used by this app.
-    // The heavy contrast-enhancement pair runs only when the page asks for
-    // it: empty/moving frames fail here cheaply with original + inverted.
-    // Missing flag means full behavior (keeps direct worker callers exact).
-    const allowEnhance = data.enhance !== false;
-    if (data.thorough !== false && !results.some(isAcceptedBarcode)) {
-      invertPixels(pixels);
-      results = await readBarcodePixels(pixels, options);
-      if (allowEnhance && !results.some(isAcceptedBarcode)) {
-        invertPixels(pixels);
-        if (prepareContrast(pixels)) {
-          const enhancedOptions = { ...options, binarizer: "FixedThreshold", minLineCount: Math.ceil(options.minLineCount * 1.5) };
-          results = await ZXingWASM.readBarcodes(enhanceContrast(pixels), enhancedOptions);
-          if (!results.some(isAcceptedBarcode)) {
-            results = await ZXingWASM.readBarcodes(enhanceContrast(pixels, true), enhancedOptions);
+    // The production page bounds retries so a moving/blurred frame cannot
+    // monopolize the decoder. Direct callers retain the full fallback behavior.
+    let deadline = performance.now() + (data.budgetMs > 0 ? data.budgetMs : Infinity);
+    let results = [];
+    if (data.focused) {
+      const located = findBarcodeRegions(pixels);
+      // Give even slower devices a decoding attempt after locating the label.
+      deadline = performance.now() + (data.budgetMs > 0 ? data.budgetMs : Infinity);
+      if (located.hasContrast) {
+        const regions = located.regions;
+        const offset = regions.length ? Math.abs(data.regionOffset || 0) % regions.length : 0;
+        for (let candidate = 0; candidate < Math.min(2, regions.length); candidate++) {
+          const rect = regions[(offset + candidate) % regions.length];
+          if (performance.now() >= deadline) break;
+          const crop = cropBarcodePixels(pixels, rect);
+          const focusedOptions = { ...options, tryDownscale: false };
+          results = await decodeBarcodePixels(crop, focusedOptions, data, deadline);
+          if (results.some(isAcceptedBarcode)) break;
+          if (rect.width <= 700 && rect.height <= 700 && performance.now() < deadline) {
+            // Re-create the unmodified crop: inverted retries may have changed it.
+            const enlarged = rotateBarcodePixels(cropBarcodePixels(pixels, rect), 0, 2);
+            results = await decodeBarcodePixels(enlarged,
+              { ...focusedOptions, minLineCount: options.minLineCount * 2 }, data, deadline);
+            if (results.some(isAcceptedBarcode)) break;
           }
         }
+        if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+          results = await decodeBarcodePixels(pixels, options, data, deadline);
+        }
       }
+    } else {
+      results = await decodeBarcodePixels(pixels, options, data, deadline);
     }
     const result = results.find(isAcceptedBarcode);
     let text = result?.text || "";

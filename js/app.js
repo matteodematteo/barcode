@@ -46,12 +46,12 @@ async function init() {
     document.body.classList.add("is-scroll-locked");
   }
 
-  // No permissions, camera, WASM compilation, or automatic login on boot.
-  // Authentication refresh is already shared and handled on demand by api.js.
+  // Prepare the interface before starting background authentication.
   state.activeDeviceId = readSavedCameraId() || "";
   state.els.scanBtn.disabled = false;
   setStatus("Ready to capture");
   performance.mark("webscanner-ready");
+  initAutomaticLoginRefresh();
   window.requestAnimationFrame(function () {
     scheduleIdleWork(warmCaptureEngine, 500);
   });

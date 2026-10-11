@@ -144,12 +144,12 @@ async function fetchAddProductThroughProxy(payload, cookie) {
 }
 
 
-async function refreshCookieForRequests(failedCookie) {
+async function refreshCookieForRequests(failedCookie, options) {
   if (cookieRequestPromise) return cookieRequestPromise;
   if (failedCookie && state.authCookie && state.authCookie !== failedCookie) {
     return state.authCookie;
   }
-  cookieRequestPromise = loginAndRefreshCookie().then(function (cookie) {
+  cookieRequestPromise = loginAndRefreshCookie(undefined, options).then(function (cookie) {
     if (!cookie) throw new Error("Could not refresh login. Check your saved login settings.");
     return cookie;
   }).finally(function () { cookieRequestPromise = null; });
