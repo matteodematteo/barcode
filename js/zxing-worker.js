@@ -148,6 +148,138 @@ function isAcceptedBarcode(result) {
   return true;
 }
 
+// Separate strongly coloured, locally uniform label surfaces from shelves,
+// foil reflections and printed packaging. White labels use the strip search.
+function findColourLabelRegions(pixels) {
+  const { width, height, data } = pixels, tile = 16;
+  const cols = Math.ceil(width / tile), rows = Math.ceil(height / tile);
+  const hues = new Int8Array(cols * rows); hues.fill(-1);
+  for (let ty = 0; ty < rows; ty++) for (let tx = 0; tx < cols; tx++) {
+    let r = 0, g = 0, b = 0, count = 0;
+    for (let dy = 3; dy < tile; dy += 5) for (let dx = 3; dx < tile; dx += 5) {
+      const x = tx * tile + dx, y = ty * tile + dy;
+      if (x >= width || y >= height) continue;
+      const i = (y * width + x) * 4;
+      r += data[i]; g += data[i + 1]; b += data[i + 2]; count++;
+    }
+    r /= count; g /= count; b /= count;
+    const high = Math.max(r, g, b), low = Math.min(r, g, b), chroma = high - low;
+    if (high < 45 || chroma < 35 || chroma / high < 0.45) continue;
+    let hue = high === r ? (g - b) / chroma : high === g ? 2 + (b - r) / chroma : 4 + (r - g) / chroma;
+    hue = (hue + 6) % 6;
+    hues[ty * cols + tx] = Math.floor(hue * 2);
+  }
+  const regions = [];
+  for (let start = 0; start < hues.length; start++) {
+    if (hues[start] < 0) continue;
+    const hue = hues[start], queue = [start]; hues[start] = -1;
+    let left = cols, right = 0, top = rows, bottom = 0;
+    for (let next = 0; next < queue.length; next++) {
+      const index = queue[next], x = index % cols, y = Math.floor(index / cols);
+      left = Math.min(left, x); right = Math.max(right, x + 1);
+      top = Math.min(top, y); bottom = Math.max(bottom, y + 1);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+        const i = ny * cols + nx, neighbour = hues[i];
+        const distance = Math.abs(neighbour - hue);
+        if (neighbour >= 0 && (distance <= 1 || distance >= 11)) { hues[i] = -1; queue.push(i); }
+      }
+    }
+    const x = left * tile, y = top * tile, w = Math.min(width, right * tile) - x, h = Math.min(height, bottom * tile) - y;
+    if (queue.length < 12 || w < 96 || h < 32 || w * h > width * height * 0.5 || queue.length / ((right - left) * (bottom - top)) < 0.5) continue;
+    const dx = (x + w / 2 - width / 2) / width, dy = (y + h / 2 - height / 2) / height;
+    regions.push({ x, y, width: w, height: h, score: 1 / (1 + 12 * (dx * dx + dy * dy)) });
+  }
+  regions.sort((a, b) => b.score - a.score);
+  return regions.slice(0, 6);
+}
+
+// Scan native-resolution rows for dense alternating edges. Tiny/short bars
+// are located independently of brighter packaging text or shelf outlines.
+function findBarcodeStrips(pixels) {
+  const { width, height, data } = pixels;
+  const step = 4, groups = [];
+  for (let y = 2; y < height - 2; y += step) {
+    const row = y * width * 4;
+    let peaks = [], previousSign = 0, strongest = 0, peakX = 0, lastX = -100;
+    const commitGroup = () => {
+      if (peaks.length < 24) { peaks = []; return; }
+      const x0 = peaks[0], x1 = peaks[peaks.length - 1], span = x1 - x0;
+      if (span < 48 || span > width * 0.92) { peaks = []; return; }
+      let group = null;
+      for (let i = groups.length - 1; i >= 0; i--) {
+        const g = groups[i];
+        if (y - g.bottom > 12) continue;
+        const overlap = Math.min(x1, g.right) - Math.max(x0, g.left);
+        if (overlap > Math.min(span, g.right - g.left) * 0.75 &&
+            Math.abs(span - (g.right - g.left)) < span * 0.3) { group = g; break; }
+      }
+      if (!group) { group = { left: x0, right: x1, top: y, bottom: y, rows: 0, edges: 0 }; groups.push(group); }
+      group.left = Math.min(group.left, x0); group.right = Math.max(group.right, x1);
+      group.bottom = y; group.rows++; group.edges = Math.max(group.edges, peaks.length);
+      peaks = [];
+    };
+    const commitPeak = () => {
+      if (!previousSign) return;
+      if (peakX - lastX > 24) commitGroup();
+      peaks.push(peakX); lastX = peakX;
+    };
+    for (let x = 2; x < width - 2; x++) {
+      // Green preserves chromatic bar contrast on yellow/red shelf labels.
+      const gradient = data[row + (x + 1) * 4 + 1] - data[row + (x - 1) * 4 + 1];
+      const sign = gradient >= 3 ? 1 : gradient <= -3 ? -1 : 0;
+      if (sign && sign === previousSign) {
+        if (Math.abs(gradient) > strongest) { strongest = Math.abs(gradient); peakX = x; }
+      } else {
+        commitPeak(); previousSign = sign; strongest = Math.abs(gradient); peakX = x;
+      }
+    }
+    commitPeak(); commitGroup();
+  }
+  const regions = [];
+  for (const g of groups) {
+    if (g.rows < 3 || g.bottom - g.top < 8) continue;
+    const span = g.right - g.left, barHeight = g.bottom - g.top;
+    if (barHeight > span * 1.2) continue;
+    const px = Math.max(16, span * 0.15), py = Math.max(24, Math.min(48, barHeight * 0.75));
+    const x = Math.max(0, Math.floor(g.left - px)), y = Math.max(0, Math.floor(g.top - py));
+    const w = Math.min(width, Math.ceil(g.right + px)) - x;
+    const h = Math.min(height, Math.ceil(g.bottom + py)) - y;
+    regions.push({ x, y, width: w, height: h, barPattern: true,
+      core: { x: g.left - x, y: g.top - y, width: span, height: barHeight },
+      score: Math.min(g.edges, 90) * Math.min(g.rows, 16) / Math.sqrt(span) /
+        (1 + 8 * (((g.left + g.right) / 2 / width - 0.5) ** 2 +
+          ((g.top + g.bottom) / 2 / height - 0.5) ** 2)), edges: g.edges });
+  }
+  regions.sort((a, b) => b.score - a.score);
+  return regions.slice(0, 8);
+}
+
+// Normalize a colour channel using the bars' own intensity range, rather than
+// a bright shelf/reflection elsewhere in the camera frame.
+function normalizeBarcodePixels(pixels, channel = 1, core = null) {
+  const { width, height, data } = pixels, hist = new Uint32Array(256);
+  const x0 = Math.max(0, Math.floor(core?.x || 0)), y0 = Math.max(0, Math.floor(core?.y || 0));
+  const x1 = Math.min(width, Math.ceil(x0 + (core?.width || width)));
+  const y1 = Math.min(height, Math.ceil(y0 + (core?.height || height)));
+  let count = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+    hist[data[(y * width + x) * 4 + channel]]++; count++;
+  }
+  let low = 0, high = 255, sum = 0;
+  for (; low < 255; low++) { sum += hist[low]; if (sum >= count * 0.02) break; }
+  sum = 0;
+  for (; high > low; high--) { sum += hist[high]; if (sum >= count * 0.02) break; }
+  if (high - low < 6) return null;
+  const output = new ImageData(width, height), gain = 255 / (high - low);
+  for (let p = 0; p < width * height; p++) {
+    const i = p * 4, value = Math.max(0, Math.min(255, Math.round((data[i + channel] - low) * gain)));
+    output.data[i] = output.data[i + 1] = output.data[i + 2] = value; output.data[i + 3] = 255;
+  }
+  return output;
+}
+
 // Locate concentrated parallel edges before resizing/rotating an entire frame.
 // Every frame is located independently so changes in distance cannot leave a
 // stale crop. All pixel processing stays in this worker (including on iOS).
@@ -377,7 +509,7 @@ self.onmessage = async ({ data }) => {
     // The production page bounds retries so a moving/blurred frame cannot
     // monopolize the decoder. Direct callers retain the full fallback behavior.
     let deadline = performance.now() + (data.budgetMs > 0 ? data.budgetMs : Infinity);
-    let results = [];
+    let results = [], focusTarget = null;
     const preferred = data.preferredRegion;
     if (preferred && [preferred.x, preferred.y, preferred.width, preferred.height].every(Number.isFinite) &&
         preferred.width > 0 && preferred.height > 0) {
@@ -390,16 +522,96 @@ self.onmessage = async ({ data }) => {
       if (width > 0 && height > 0) {
         const rect = { x, y, width, height };
         const crop = cropBarcodePixels(pixels, rect);
-        results = await decodeBarcodePixels(crop, { ...options, tryDownscale: false }, data, deadline);
+        const confirmOptions = { ...options, tryDownscale: false, binarizer: "LocalAverage" };
+        results = await ZXingWASM.readBarcodes(crop, confirmOptions);
+        if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+          const normalized = normalizeBarcodePixels(crop, 1);
+          if (normalized) results = await ZXingWASM.readBarcodes(normalized, confirmOptions);
+        }
+        if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+          results = await decodeBarcodePixels(crop, confirmOptions, data, deadline);
+        }
         if (results.some(isAcceptedBarcode)) results = offsetBarcodePositions(results, rect);
       }
     }
-    if (!results.some(isAcceptedBarcode) && data.focused) {
+    if (!results.some(isAcceptedBarcode)) {
+      // Sparse full-image rows are cheap. Reflective shelves need local colour
+      // correction, rather than repeated dense reads of the entire scene.
+      const quick = { ...options, tryHarder: false, tryDownscale: false, binarizer: "LocalAverage" };
+      results = await ZXingWASM.readBarcodes(pixels, quick);
+      if (!results.some(isAcceptedBarcode)) {
+        const panels = findColourLabelRegions(pixels);
+        if (panels.length) {
+          const local = [];
+          for (const panel of panels) {
+            // Wide coloured packaging headers are still searched globally;
+            // they must not lead ahead of a compact price-label barcode.
+            if (panel.width > pixels.width * 0.7) continue;
+            for (const strip of findBarcodeStrips(cropBarcodePixels(pixels, panel)).slice(0, 2)) {
+              const rect = { ...strip, x: strip.x + panel.x, y: strip.y + panel.y, score: strip.score * panel.score };
+              local.push(rect);
+              // A compact, central label with enough alternating edges is a
+              // useful focus target. It never counts as a decode or an outline.
+              if (!focusTarget && panel.score > 0.7 && panel.width < pixels.width * 0.4 &&
+                  panel.width * panel.height < pixels.width * pixels.height * 0.12 &&
+                  strip.edges >= 40 && strip.edges <= 160 && strip.core.height / strip.core.width >= 0.05) {
+                focusTarget = { x: rect.x + strip.core.x, y: rect.y + strip.core.y,
+                  width: strip.core.width, height: strip.core.height };
+              }
+            }
+          }
+          local.sort((a, b) => b.score - a.score);
+          const regions = local.concat(findBarcodeStrips(pixels));
+          const dense = { ...quick, tryHarder: true };
+          deadline = performance.now() + (data.budgetMs > 0 ? data.budgetMs : Infinity);
+          // Try each candidate once before rotating or enlarging a distractor.
+          // Original colour can read Code128 even when a green plane cannot.
+          for (const rect of regions) {
+            if (performance.now() >= deadline) break;
+            const crop = cropBarcodePixels(pixels, rect);
+            results = await ZXingWASM.readBarcodes(crop, dense);
+            if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+              const normalized = normalizeBarcodePixels(crop, 1, rect.core);
+              if (normalized) results = await ZXingWASM.readBarcodes(normalized, dense);
+            }
+            if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+              // Video colour conversion can weaken edge rows. Include the
+              // quiet-zone intensity range before spending rotation retries.
+              const normalized = normalizeBarcodePixels(crop, 1);
+              if (normalized) results = await ZXingWASM.readBarcodes(normalized, dense);
+            }
+            if (results.some(isAcceptedBarcode)) { results = offsetBarcodePositions(results, rect); break; }
+          }
+        }
+      }
+    }
+    // White/angled/vertical labels retain the proven rotation and dense-crop
+    // fallbacks. A coloured strip miss must never exclude other barcode types.
+    deadline = performance.now() + (data.budgetMs > 0 ? data.budgetMs : Infinity);
+    if (!results.some(isAcceptedBarcode) && focusTarget && Math.abs(data.regionOffset || 0) % 4 !== 3) {
+      // A short, blurred barcode benefits from new camera pixels. Avoid slow
+      // dense whole-shelf retries while autofocus/camera zoom is settling.
+      const px = Math.max(20, focusTarget.width * 0.2), py = Math.max(16, focusTarget.height);
+      const x = Math.max(0, Math.floor(focusTarget.x - px)), y = Math.max(0, Math.floor(focusTarget.y - py));
+      const rect = { x, y, width: Math.min(pixels.width, Math.ceil(focusTarget.x + focusTarget.width + px)) - x,
+        height: Math.min(pixels.height, Math.ceil(focusTarget.y + focusTarget.height + py)) - y };
+      const crop = cropBarcodePixels(pixels, rect), normalized = normalizeBarcodePixels(crop, 1);
+      if (normalized) {
+        const angle = estimateBarcodeRotation(normalized);
+        const enlarged = rotateBarcodePixels(normalized, angle, 2);
+        results = await decodeBarcodePixels(enlarged, { ...options, tryDownscale: false,
+          minLineCount: options.minLineCount * 2 }, { ...data, orientation: "auto" }, deadline);
+        if (results.some(isAcceptedBarcode)) results = offsetBarcodePositions(
+          restoreRotatedPositions(results, crop, enlarged, angle, 2), rect);
+      }
+    } else if (!results.some(isAcceptedBarcode) && data.focused) {
       // Read the whole visible crop first. Background text/stripes must not
       // consume every retry before the real barcode even reaches the reader.
       const quickOptions = { ...options, tryHarder: false, tryDownscale: false,
         minLineCount: options.binarizer === "FixedThreshold" ? Math.ceil(options.minLineCount * 1.5) : options.minLineCount };
-      results = await ZXingWASM.readBarcodes(pixels, quickOptions);
+      // The preceding strip search already tried sparse LocalAverage rows.
+      // Only a different binarizer needs another whole-image sparse read.
+      if (options.binarizer !== "LocalAverage") results = await ZXingWASM.readBarcodes(pixels, quickOptions);
       if (!results.some(isAcceptedBarcode)) {
         const located = findBarcodeRegions(pixels);
         // Even a slower device gets a crop attempt after locating the label.
@@ -475,6 +687,9 @@ self.onmessage = async ({ data }) => {
         self.postMessage({ id: data.id, type: "region",
           region: { x, y, width: Math.max(1, right - x), height: Math.max(1, bottom - y) } });
       }
+    }
+    if (!result && focusTarget && data.assistCamera) {
+      self.postMessage({ id: data.id, type: "focus", region: focusTarget });
     }
     let text = result?.text || "";
     // ZXing 3 normalizes UPC content to EAN-13 internally.

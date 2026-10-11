@@ -6,7 +6,7 @@
   let worker = null;
   let pending = null;
   let sequence = 0;
-  const workerUrl = new URL("zxing-worker.js?v=143", document.currentScript.src);
+  const workerUrl = new URL("zxing-worker.js?v=145", document.currentScript.src);
 
   window.ensureZXingLoaded = function () {
     if (readyPromise) return readyPromise;
@@ -45,7 +45,7 @@
               if (pending) return Promise.reject(new Error("A frame is already being decoded"));
               return new Promise((resolveFrame, rejectFrame) => {
                 const id = ++sequence;
-                pending = { id, resolve: resolveFrame, reject: rejectFrame, onRegion: options.onRegion,
+                pending = { id, resolve: resolveFrame, reject: rejectFrame, onRegion: options.onRegion, onFocus: options.onFocus,
                   timer: setTimeout(() => fail(new Error("Scanner read timed out. Please retry.")), 10000) };
                 try {
                   worker.postMessage({ id, buffer: image.data.buffer, width: image.width,
@@ -54,6 +54,7 @@
                     downscale: options.downscale !== false, minLineCount: options.minLineCount || 2,
                     focused: options.focused === true, budgetMs: options.budgetMs || 0,
                     trackRegions: typeof options.onRegion === "function",
+                    assistCamera: typeof options.onFocus === "function",
                     regionOffset: options.regionOffset || 0,
                     preferredRegion: options.preferredRegion || null,
                     binarizer: options.binarizer || "LocalAverage" }, [image.data.buffer]);
@@ -68,6 +69,8 @@
         } else if (pending && data.id === pending.id && data.type === "region") {
           // Progress keeps the frame pending until its decoded result arrives.
           try { pending.onRegion?.(data.region); } catch (_) { /* Feedback cannot interrupt decoding. */ }
+        } else if (pending && data.id === pending.id && data.type === "focus") {
+          try { pending.onFocus?.(data.region); } catch (_) { /* Optional camera assistance. */ }
         } else if (pending && data.id === pending.id) {
           const request = pending;
           pending = null;

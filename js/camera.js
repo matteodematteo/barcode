@@ -1,6 +1,6 @@
 "use strict";
 
-/* Camera preview, scanning, ROI, and torch */
+/* Camera preview, scanning, autofocus, and torch */
 
 function setActivePreviewEngine(engine) {
   if (state.els?.cameraPreview) {
@@ -695,6 +695,7 @@ async function detectBarcodeInFrame() {
         width: state.lastBarcodeRegion.width * frameGeometry.outputWidth / frameGeometry.sw,
         height: state.lastBarcodeRegion.height * frameGeometry.outputHeight / frameGeometry.sh
       } : null,
+      onFocus: (region) => { assistSmallBarcode(region, frameGeometry, session); },
       onRegion: (region) => {
         if (session !== state.scanSession) return;
         state.lastBarcodeRegion = {
@@ -1013,12 +1014,12 @@ function isCurrentCameraTrack(track) {
 }
 
 
-function applyCameraTrackConstraints(track, changes) {
+function applyCameraTrackConstraints(track, changes, session) {
   // applyConstraints replaces the previous constraints. Keep the current
   // resolution, frame rate and torch, and serialize focus/torch changes.
   const previous = cameraConstraintQueues.get(track) || Promise.resolve();
   const pending = previous.catch(() => {}).then(async function () {
-    if (!isCurrentCameraTrack(track)) return false;
+    if (!isCurrentCameraTrack(track) || session !== undefined && session !== state.scanSession) return false;
     // Some browsers report only image-capture controls from getConstraints()
     // after focus/torch changes. Retain our full request so these operations
     // cannot silently reset the video resolution or frame rate.
@@ -1039,6 +1040,51 @@ function applyCameraTrackConstraints(track, changes) {
   });
   cameraConstraintQueues.set(track, pending);
   return pending;
+}
+
+
+
+// Candidates assist the lens only; outline/capture still require valid decoded
+// bars. Unsupported camera controls leave normal decoding active.
+const cameraBarcodeAssist = new WeakMap();
+function assistSmallBarcode(region, frame, session) {
+  const track = state.track;
+  if (session !== state.scanSession || !state.isScanning || !state.capturePageOpen ||
+      !isCurrentCameraTrack(track) || !track.getCapabilities || !track.applyConstraints) return;
+  if (![region?.x, region?.y, region?.width, region?.height].every(Number.isFinite) ||
+      region.width <= 0 || region.height <= 0 || !frame?.videoWidth || !frame.videoHeight) return;
+  const target = {
+    x: (frame.sx + (region.x + region.width / 2) * frame.sw / frame.outputWidth) / frame.videoWidth,
+    y: (frame.sy + (region.y + region.height / 2) * frame.sh / frame.outputHeight) / frame.videoHeight,
+    width: region.width * frame.sw / frame.outputWidth / frame.videoWidth
+  };
+  if (![target.x, target.y, target.width].every(Number.isFinite) || target.width <= 0 ||
+      target.x < 0 || target.x > 1 || target.y < 0 || target.y > 1) return;
+  let assist = cameraBarcodeAssist.get(track);
+  if (!assist || assist.session !== session) {
+    assist = { session, target, count: 1, acted: false };
+    cameraBarcodeAssist.set(track, assist);
+    return;
+  }
+  const stable = Math.hypot(target.x - assist.target.x, target.y - assist.target.y) < 0.06 &&
+    Math.abs(target.width - assist.target.width) < assist.target.width * 0.3;
+  assist.target = target;
+  assist.count = stable ? assist.count + 1 : 1;
+  if (assist.count < 2 || assist.acted) return;
+  assist.acted = true;
+  requestFocusRefresh(track, { force: true, point: target, session });
+  // Native camera zoom can supply better sensor pixels than enlarging an old
+  // blurry frame. Retain 1080p/30fps, torch and focus in the constraint queue.
+  try {
+    const zoom = track.getCapabilities().zoom, current = track.getSettings?.().zoom;
+    if (!zoom || !Number.isFinite(zoom.min) || !Number.isFinite(zoom.max) ||
+        !Number.isFinite(current) || current <= 0 || target.width >= 0.24) return;
+    const desired = Math.min(zoom.max, current * Math.min(2, 0.38 / target.width));
+    const step = zoom.step > 0 ? zoom.step : 0.01;
+    const value = Math.max(zoom.min, Math.min(zoom.max, zoom.min + Math.floor((desired - zoom.min) / step) * step));
+    if (value <= current * 1.15) return;
+    applyCameraTrackConstraints(track, { zoom: value }, session).catch(() => {});
+  } catch (_) { /* Camera controls are optional on iOS and Android. */ }
 }
 
 
@@ -1086,12 +1132,12 @@ async function requestFocusRefresh(track, options = {}) {
     focus.pending = (async function () {
       let applied;
       try {
-        applied = await applyCameraTrackConstraints(track, changes);
+        applied = await applyCameraTrackConstraints(track, changes, options.session);
       } catch (error) {
         if (!point || !isCurrentCameraTrack(track)) throw error;
         // Some browsers recognize pointsOfInterest but the camera rejects it.
         focus.pointRejected = true;
-        applied = await applyCameraTrackConstraints(track, { focusMode: mode });
+        applied = await applyCameraTrackConstraints(track, { focusMode: mode }, options.session);
       }
       if (!applied) return false;
       const actualMode = track.getSettings?.().focusMode;
@@ -1308,25 +1354,6 @@ async function startCamera(deviceId) {
 }
 
 
-function clearScanTimeoutTimer() {
-  if (state.scanTimeoutTimer) {
-    window.clearTimeout(state.scanTimeoutTimer);
-    state.scanTimeoutTimer = 0;
-  }
-}
-
-
-function startScanTimeoutTimer() {
-  clearScanTimeoutTimer();
-  state.scanTimeoutTimer = window.setTimeout(function () {
-    if (state.isScanning) {
-      closeCapturePage();
-      setStatus("No barcode found. Tap Capture to try again.");
-    }
-  }, 10000);
-}
-
-
 async function startScanning() {
   if (!state.capturePageOpen || document.hidden || state.isScanning) return;
   const generation = state.captureGeneration;
@@ -1361,7 +1388,6 @@ async function startScanning() {
   state.lastDetectedBarcode = "";
   state.lastDetectedAt = 0;
   state.isScanning = true;
-  startScanTimeoutTimer();
   updateScanButton();
   updateModePill();
   setStatus("Scanning barcode…");
@@ -1373,7 +1399,6 @@ function stopScanning(keepStatusMessage) {
   state.scanSession += 1;
   resetBarcodeTracking();
   state.lastBarcodeRegion = null;
-  clearScanTimeoutTimer();
   cleanupScanTimer();
   state.isScanning = false;
   state.pendingConfirmCode = "";

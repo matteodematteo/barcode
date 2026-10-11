@@ -31,7 +31,6 @@ const state = {
     scanSession: 0,
     torchOn: false,
     scanTimer: 0,
-    scanTimeoutTimer: 0,
     authCookie: "",
     authStatus: "",
     history: [],

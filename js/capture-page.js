@@ -70,7 +70,7 @@ function loadCaptureEngine() {
   if (captureEnginePromise) return captureEnginePromise;
   captureEnginePromise = new Promise(function (resolve, reject) {
     const script = document.createElement("script");
-    script.src = "js/capture.bundle.js?v=143";
+    script.src = "js/capture.bundle.js?v=145";
     script.onload = function () {
       captureEngineLoaded = true;
       initPreviewFocus();
