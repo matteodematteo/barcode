@@ -4,16 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f5f6f2" />
-  <meta name="webscanner-version" content="138" />
+  <meta name="webscanner-version" content="139" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Web Scanner" />
-  <link rel="manifest" href="manifest.webmanifest?v=138" />
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=138" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=138" />
+  <link rel="manifest" href="manifest.webmanifest?v=139" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=139" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=139" />
   <title>Web Barcode Scanner</title>
-  <link rel="preload" href="js/app.bundle.js?v=138" as="script" />
-  <link rel="preload" href="css/interface.bundle.css?v=138" as="style" />
+  <link rel="preload" href="js/app.bundle.js?v=139" as="script" />
+  <link rel="preload" href="css/interface.bundle.css?v=139" as="style" />
   <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
        round-trips for the above-the-fold shell (base + scanner + layout +
        essential components). The remaining interface styles load as one small sheet below. -->
@@ -368,13 +368,13 @@
   <!-- These sheets affect the visible page geometry. Keep them render-blocking so
        browsers paint the completed interface once instead of restyling sections
        progressively on a slow connection. -->
-  <link rel="stylesheet" href="css/interface.bundle.css?v=138" />
+  <link rel="stylesheet" href="css/interface.bundle.css?v=139" />
 </head>
 <body>
   <main class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=138" width="34" height="34" alt="" decoding="async" /></span>
+        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=139" width="34" height="34" alt="" decoding="async" /></span>
         <div><h1>Web Scanner</h1></div>
       </div>
       <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
@@ -778,6 +778,6 @@
     <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
   </div>
   <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
-  <script src="js/app.bundle.js?v=138" defer></script>
+  <script src="js/app.bundle.js?v=139" defer></script>
 </body>
 </html>

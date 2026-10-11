@@ -85,8 +85,8 @@ function estimateBarcodeRotation(pixels) {
   for (let y = step; y < height - step; y += step) {
     for (let x = step; x < width - step; x += step) {
       const i = (y * width + x) * 4 + 1;
-      const gx = data[i + step * 4] - data[i - step * 4];
-      const gy = data[i + step * width * 4] - data[i - step * width * 4];
+      const gx = data[i + 4] - data[i - 4];
+      const gy = data[i + width * 4] - data[i - width * 4];
       xx += gx * gx;
       yy += gy * gy;
       xy += gx * gy;
@@ -148,6 +148,18 @@ function isAcceptedBarcode(result) {
   return true;
 }
 
+async function readBarcodePixels(pixels, options) {
+  let results = await ZXingWASM.readBarcodes(pixels, options);
+  if (options.tryHarder && !results.some(isAcceptedBarcode)) {
+    // Edge sharpening in the adaptive linear reader can erase near-pixel-wide
+    // bars. A plain threshold preserves them; require extra matching scan rows.
+    results = await ZXingWASM.readBarcodes(pixels, {
+      ...options, binarizer: "FixedThreshold", minLineCount: Math.ceil(options.minLineCount * 1.5)
+    });
+  }
+  return results;
+}
+
 self.onmessage = async ({ data }) => {
   try {
     await ready;
@@ -157,21 +169,21 @@ self.onmessage = async ({ data }) => {
       tryHarder: data.thorough !== false,
       tryRotate: true,
       tryInvert: true,
-      tryDownscale: true,
+      tryDownscale: data.downscale !== false,
       maxNumberOfSymbols: 1,
       textMode: "Plain",
-      minLineCount: 2
+      minLineCount: Math.max(2, data.minLineCount || 2)
     };
-    let results = await ZXingWASM.readBarcodes(pixels, options);
+    let results = await readBarcodePixels(pixels, options);
     if (data.orientation && !results.some(isAcceptedBarcode)) {
       const angle = data.orientation === "auto" ? estimateBarcodeRotation(pixels) : Number(data.orientation);
       if (Number.isFinite(angle) && angle) {
         const rotated = rotateBarcodePixels(pixels, angle);
         const rotatedOptions = { ...options, tryHarder: true };
-        results = await ZXingWASM.readBarcodes(rotated, rotatedOptions);
+        results = await readBarcodePixels(rotated, rotatedOptions);
         if (data.thorough !== false && !results.some(isAcceptedBarcode)) {
           invertPixels(rotated);
-          results = await ZXingWASM.readBarcodes(rotated, rotatedOptions);
+          results = await readBarcodePixels(rotated, rotatedOptions);
         }
       }
     }
@@ -183,11 +195,11 @@ self.onmessage = async ({ data }) => {
     const allowEnhance = data.enhance !== false;
     if (data.thorough !== false && !results.some(isAcceptedBarcode)) {
       invertPixels(pixels);
-      results = await ZXingWASM.readBarcodes(pixels, options);
+      results = await readBarcodePixels(pixels, options);
       if (allowEnhance && !results.some(isAcceptedBarcode)) {
         invertPixels(pixels);
         if (prepareContrast(pixels)) {
-          const enhancedOptions = { ...options, binarizer: "FixedThreshold", minLineCount: 3 };
+          const enhancedOptions = { ...options, binarizer: "FixedThreshold", minLineCount: Math.ceil(options.minLineCount * 1.5) };
           results = await ZXingWASM.readBarcodes(enhanceContrast(pixels), enhancedOptions);
           if (!results.some(isAcceptedBarcode)) {
             results = await ZXingWASM.readBarcodes(enhanceContrast(pixels, true), enhancedOptions);

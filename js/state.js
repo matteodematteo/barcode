@@ -100,5 +100,4 @@ const state = {
     roi: { width: 0.8, height: 0.8 },
     pendingConfirmCode: "",
     pendingConfirmCount: 0,
-    thoroughPassCount: 0
   };

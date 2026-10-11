@@ -516,7 +516,7 @@ function getSquareCropSize(video) {
 
 
 function getDetectionCropModes() {
-  return ["expanded", "visible"];
+  return ["expanded", "detail", "visible", "visible"];
 }
 
 
@@ -602,7 +602,7 @@ function drawDetectionFrame(mode, maxOutputSize = 1920) {
   let sh = videoHeight;
   const isiOS = state.isIOS;
 
-  if (mode === "expanded" || mode === "visible") {
+  if (mode === "expanded" || mode === "detail" || mode === "visible") {
     const container = state.els.previewFrame;
     const cover = getCoverSourceRect(videoWidth, videoHeight,
       container?.clientWidth || videoWidth, container?.clientHeight || videoHeight);
@@ -612,6 +612,12 @@ function drawDetectionFrame(mode, maxOutputSize = 1920) {
     const heightRatio = mode === "visible" ? 1 : Math.min(0.65, Math.max(0.5, state.roi.height));
     sw = cover.visibleWidth * widthRatio;
     sh = cover.visibleHeight * heightRatio;
+    if (mode === "detail") {
+      // Enlarge the central band without changing the 1080p camera stream.
+      // Bound each source dimension so enlargement stays within 1920px.
+      sw = Math.min(sw, 960);
+      sh = Math.min(sh, 960);
+    }
     sx = cover.offsetX + (cover.visibleWidth - sw) / 2;
     sy = cover.offsetY + (cover.visibleHeight - sh) / 2;
   } else if (mode === "roi") {
@@ -638,7 +644,13 @@ function drawDetectionFrame(mode, maxOutputSize = 1920) {
     }
   }
 
-  const scale = Math.min(1, maxOutputSize / Math.max(sw, sh));
+  // Fractional source rectangles blur narrow bars even at native output size.
+  // Align the crop to sensor pixels before any intentional enlargement.
+  sx = Math.max(0, Math.min(videoWidth - 1, Math.round(sx)));
+  sy = Math.max(0, Math.min(videoHeight - 1, Math.round(sy)));
+  sw = Math.max(1, Math.min(videoWidth - sx, Math.round(sw)));
+  sh = Math.max(1, Math.min(videoHeight - sy, Math.round(sh)));
+  const scale = Math.min(mode === "detail" ? 2 : 1, maxOutputSize / Math.max(sw, sh));
   const outputWidth = Math.max(1, Math.round(sw * scale));
   const outputHeight = Math.max(1, Math.round(sh * scale));
 
@@ -649,6 +661,7 @@ function drawDetectionFrame(mode, maxOutputSize = 1920) {
     canvas.height = outputHeight;
   }
 
+  context.imageSmoothingEnabled = mode === "detail";
   context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
   return canvas;
 }
@@ -787,17 +800,16 @@ async function detectBarcodeInFrame() {
   const session = state.scanSession;
   const detector = await createDetector();
   const attempt = state.detectionAttempt || 0;
-  // Quick center/full-preview passes, then high-resolution difficult-label passes.
-  // The heaviest step (contrast enhancement) runs on every 2nd thorough pass:
-  // empty frames fail cheaply, faint labels still get their full treatment.
+  // Keep the successful crop for confirmation on the next fresh camera frame.
   const confirming = Boolean(state.pendingConfirmCode && state.lastDetectionPass);
   const pass = confirming ? state.lastDetectionPass : makeDetectionPass(attempt);
-  const canvas = drawDetectionFrame(pass.mode, pass.thorough ? 1920 : 1280);
+  const canvas = drawDetectionFrame(pass.mode);
   const context = state.captureContext || canvas.getContext("2d", { willReadFrequently: true });
   const image = context.getImageData(0, 0, canvas.width, canvas.height);
   const text = await detector.detect(image,
     CONFIG.detectorFormats.map((format) => ZXING_FORMAT_MAP[format]).filter(Boolean),
-    { thorough: pass.thorough, enhance: pass.enhance !== false, orientation: pass.orientation });
+    { thorough: pass.thorough, enhance: pass.enhance, orientation: pass.orientation,
+      downscale: pass.mode === "visible", minLineCount: pass.mode === "detail" ? 4 : 2 });
   if (session === state.scanSession) {
     state.detectionAttempt = attempt + 1;
     if (text) state.lastDetectionPass = pass;
@@ -807,19 +819,15 @@ async function detectBarcodeInFrame() {
 
 
 function makeDetectionPass(attempt) {
-  const thorough = attempt % 4 >= 2;
-  let enhance = false;
-  if (thorough) {
-    state.thoroughPassCount = (state.thoroughPassCount || 0) + 1;
-    enhance = state.thoroughPassCount % 2 === 1;
-  }
+  const phase = attempt % 4;
   return {
-    mode: getDetectionCropModes()[attempt % 2],
-    thorough: thorough,
-    enhance: enhance,
-    // Full-preview passes preserve the entire label at any orientation.
-    // Estimate its angle first; later passes cover cluttered backgrounds.
-    orientation: attempt % 2 ? ["auto", 45, 15, -15, 30, -30][Math.floor(attempt / 2) % 6] : 0
+    mode: getDetectionCropModes()[phase],
+    // Sparse quick scans can skip a distant label's entire height. Dense scans
+    // start immediately; expensive contrast retries only run every fourth pass.
+    thorough: true,
+    enhance: phase === 3,
+    orientation: phase === 3
+      ? [45, 15, -15, 30, -30][Math.floor(attempt / 4) % 5] : "auto"
   };
 }
 
@@ -961,7 +969,14 @@ async function captureAttempt(session) {
     return false;
   }
 
-  const frame = await waitForFreshVideoFrame(video);
+  // Decoding may take longer than a camera frame. Use an already advanced
+  // frame immediately, but never confirm twice from the same frozen frame.
+  const available = readVideoFrameSample(video);
+  const comparableCounters = available.decodedFrames !== null &&
+    (!state.lastScanFrame || state.lastScanFrame.decodedFrames !== null);
+  const canUseAvailable = comparableCounters || typeof video.requestVideoFrameCallback !== "function";
+  const frame = canUseAvailable && hasVideoFrameAdvanced(available, state.lastScanFrame)
+    ? available : await waitForFreshVideoFrame(video);
   if (session !== state.scanSession || !state.isScanning || document.hidden) return false;
   if (!hasVideoFrameAdvanced(frame, state.lastScanFrame)) return false;
   state.lastScanFrame = frame;
@@ -1431,7 +1446,6 @@ async function startScanning() {
 
   scheduleFocusRefresh(state.track, { newScan: true });
   state.detectionAttempt = 0;
-  state.thoroughPassCount = 0;
   state.lastDetectionPass = null;
   state.lastScanFrame = null;
   // Each explicit capture is a new item, including the same SKU again.
