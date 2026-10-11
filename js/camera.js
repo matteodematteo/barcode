@@ -629,8 +629,8 @@ function drawDetectionFrame(mode, maxOutputSize = 1920) {
 }
 
 
-// Reuse regions already located in the decoding worker; no second detector or
-// extra video read is needed to animate the outline.
+// Display only the valid barcode's decoded corners from the worker. Text and
+// packaging edges stay invisible; drawing feedback never controls the search.
 let barcodeTrackingTimer = 0;
 
 function resetBarcodeTracking() {
@@ -689,7 +689,22 @@ async function detectBarcodeInFrame() {
       downscale: pass.mode === "visible", minLineCount: 2,
       focused: pass.focused, budgetMs: 80, binarizer: pass.binarizer,
       regionOffset: pass.regionOffset,
-      onRegion: (region) => updateBarcodeTracking(region, frameGeometry, session) });
+      preferredRegion: confirming && state.lastBarcodeRegion ? {
+        x: (state.lastBarcodeRegion.x - frameGeometry.sx) * frameGeometry.outputWidth / frameGeometry.sw,
+        y: (state.lastBarcodeRegion.y - frameGeometry.sy) * frameGeometry.outputHeight / frameGeometry.sh,
+        width: state.lastBarcodeRegion.width * frameGeometry.outputWidth / frameGeometry.sw,
+        height: state.lastBarcodeRegion.height * frameGeometry.outputHeight / frameGeometry.sh
+      } : null,
+      onRegion: (region) => {
+        if (session !== state.scanSession) return;
+        state.lastBarcodeRegion = {
+          x: frameGeometry.sx + region.x * frameGeometry.sw / frameGeometry.outputWidth,
+          y: frameGeometry.sy + region.y * frameGeometry.sh / frameGeometry.outputHeight,
+          width: region.width * frameGeometry.sw / frameGeometry.outputWidth,
+          height: region.height * frameGeometry.sh / frameGeometry.outputHeight
+        };
+        updateBarcodeTracking(region, frameGeometry, session);
+      } });
   if (session === state.scanSession) {
     state.detectionAttempt = attempt + 1;
     state.lastDetectionPass = text ? pass : null;
@@ -702,13 +717,15 @@ function makeDetectionPass(attempt) {
   const phase = attempt % 4;
   return {
     mode: getDetectionCropModes()[phase],
-    // Sparse quick scans can skip a distant label's entire height. Dense scans
-    // start immediately; expensive contrast retries only run every fourth pass.
+    // Keep dense crop reads for short/distant labels; expensive contrast
+    // retries only run every fourth pass.
     thorough: true,
     enhance: phase === 3,
     // Periodic whole-preview reads and rotating candidate priority prevent
     // background text from starving another barcode region.
-    focused: phase !== 2,
+    // Dedicated whole-preview passes also try fixed angles, independent of
+    // clutter that could dominate a crop's measured orientation.
+    focused: phase < 2,
     regionOffset: attempt,
     binarizer: phase === 1 ? "FixedThreshold" : "LocalAverage",
     orientation: phase === 3
@@ -1335,6 +1352,7 @@ async function startScanning() {
   if (!state.capturePageOpen || generation !== state.captureGeneration || session !== state.scanSession) return;
 
   resetBarcodeTracking();
+  state.lastBarcodeRegion = null;
   scheduleFocusRefresh(state.track, { newScan: true });
   state.detectionAttempt = 0;
   state.lastDetectionPass = null;
@@ -1354,6 +1372,7 @@ async function startScanning() {
 function stopScanning(keepStatusMessage) {
   state.scanSession += 1;
   resetBarcodeTracking();
+  state.lastBarcodeRegion = null;
   clearScanTimeoutTimer();
   cleanupScanTimer();
   state.isScanning = false;

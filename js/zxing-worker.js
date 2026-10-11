@@ -151,6 +151,50 @@ function isAcceptedBarcode(result) {
 // Locate concentrated parallel edges before resizing/rotating an entire frame.
 // Every frame is located independently so changes in distance cannot leave a
 // stale crop. All pixel processing stays in this worker (including on iOS).
+// Regular packaging stripes have constant black/white run widths. Real
+// linear codes contain varied module widths across several adjacent rows.
+// This ranks candidates only; the decoder still decides what is a barcode.
+function hasBarcodeRunPattern(pixels, rect) {
+  const crop = cropBarcodePixels(pixels, rect);
+  const angle = -estimateBarcodeRotation(crop) * Math.PI / 180;
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const half = Math.min(rect.width / Math.max(0.001, Math.abs(cos)),
+    rect.height / Math.max(0.001, Math.abs(sin))) / 2 - 1;
+  let matchingRows = 0;
+  for (const offset of [-0.06, 0, 0.06]) {
+    const shift = Math.min(rect.width, rect.height) * offset;
+    const cx = rect.width / 2 - sin * shift, cy = rect.height / 2 + cos * shift;
+    const values = [];
+    let darkest = 255, lightest = 0;
+    for (let d = -half; d <= half; d++) {
+      const x = Math.round(cx + cos * d), y = Math.round(cy + sin * d);
+      if (x < 0 || y < 0 || x >= crop.width || y >= crop.height) continue;
+      const i = (y * crop.width + x) * 4;
+      const value = (crop.data[i] * 77 + crop.data[i + 1] * 150 + crop.data[i + 2] * 29) >> 8;
+      values.push(value); darkest = Math.min(darkest, value); lightest = Math.max(lightest, value);
+    }
+    if (lightest - darkest < 12) continue;
+    const threshold = (lightest + darkest) / 2, runs = [[], []];
+    let previous = values[0] < threshold ? 0 : 1, count = 0, first = true;
+    for (const value of values) {
+      const color = value < threshold ? 0 : 1;
+      if (color !== previous) {
+        if (!first) runs[previous].push(count);
+        first = false; previous = color; count = 0;
+      }
+      count++;
+    }
+    if (runs.some((widths) => widths.length < 8)) continue;
+    const varied = runs.every((widths) => {
+      const mean = widths.reduce((sum, width) => sum + width, 0) / widths.length;
+      const variance = widths.reduce((sum, width) => sum + (width - mean) ** 2, 0) / widths.length;
+      return variance / (mean * mean) >= 0.035;
+    });
+    if (varied) matchingRows++;
+  }
+  return matchingRows >= 2;
+}
+
 function findBarcodeRegions(pixels) {
   const { width, height, data } = pixels;
   const tile = 32, cols = Math.ceil(width / tile), rows = Math.ceil(height / tile);
@@ -200,13 +244,14 @@ function findBarcodeRegions(pixels) {
     const w = Math.min(width, right * tile + padding) - x;
     const h = Math.min(height, bottom * tile + padding) - y;
     if (w * h >= width * height * 0.8) continue;
-    regions.push({ x, y, width: w, height: h, score: score / Math.sqrt(w * h),
-      // Display the detected bars; quiet-zone padding is only for decoding.
-      bounds: { x: left * tile, y: top * tile,
-        width: Math.min(width, right * tile) - left * tile,
-        height: Math.min(height, bottom * tile) - top * tile } });
+    regions.push({ x, y, width: w, height: h, score: score / Math.sqrt(w * h) });
   }
   regions.sort((a, b) => b.score - a.score);
+  // Consider more than the strongest four edge clusters, so bright stripes
+  // and text cannot push a faint/small barcode out of the search entirely.
+  const candidates = regions.slice(0, 12);
+  for (const rect of candidates) rect.barPattern = hasBarcodeRunPattern(pixels, rect);
+  candidates.sort((a, b) => Number(b.barPattern) - Number(a.barPattern) || b.score - a.score);
   let hasContrast = lightest > darkest;
   if (!hasContrast) {
     // A coarse grid must never discard a thin label between sample points.
@@ -215,7 +260,7 @@ function findBarcodeRegions(pixels) {
       if (luma(i) !== reference) { hasContrast = true; break; }
     }
   }
-  return { regions: regions.slice(0, 4), hasContrast };
+  return { regions: candidates.slice(0, 8), hasContrast };
 }
 
 function cropBarcodePixels(pixels, rect) {
@@ -241,9 +286,50 @@ async function readBarcodePixels(pixels, options, deadline = Infinity) {
   return results;
 }
 
+// Keep decoded corners in the input frame's coordinates, including manual
+// rotation/enlargement fallbacks. The outline never uses guessed edge regions.
+function mapBarcodePositions(results, transform) {
+  return results.map((result) => {
+    if (!isAcceptedBarcode(result) || !result.position) return result;
+    const position = {};
+    for (const [corner, point] of Object.entries(result.position)) position[corner] = transform(point);
+    return { ...result, position };
+  });
+}
+
+function restoreRotatedPositions(results, original, rotated, angle, enlargement = 1) {
+  const radians = angle * Math.PI / 180, cos = Math.cos(radians), sin = Math.sin(radians);
+  const rotatedWidth = Math.abs(original.width * cos) + Math.abs(original.height * sin);
+  const rotatedHeight = Math.abs(original.width * sin) + Math.abs(original.height * cos);
+  const scale = Math.min(enlargement, 1920 / Math.max(rotatedWidth, rotatedHeight));
+  return mapBarcodePositions(results, (point) => ({
+    x: ((point.x + 0.5 - rotated.width / 2) * cos + (point.y + 0.5 - rotated.height / 2) * sin) / scale + original.width / 2 - 0.5,
+    y: (-(point.x + 0.5 - rotated.width / 2) * sin + (point.y + 0.5 - rotated.height / 2) * cos) / scale + original.height / 2 - 0.5
+  }));
+}
+
+function offsetBarcodePositions(results, rect) {
+  return mapBarcodePositions(results, (point) => ({ x: point.x + rect.x, y: point.y + rect.y }));
+}
+
 async function decodeBarcodePixels(pixels, options, data, deadline) {
-  let results = await readBarcodePixels(pixels, options, deadline);
-  if (data.orientation && !results.some(isAcceptedBarcode) && performance.now() < deadline) {
+  let results = [], triedRotation = false;
+  const fixedAngle = data.orientation === "auto" ? 0 : Number(data.orientation);
+  if (Number.isFinite(fixedAngle) && fixedAngle) {
+    // A scheduled fixed-angle pass must actually try that angle, even when
+    // dense full-frame retries would otherwise exhaust the per-frame budget.
+    triedRotation = true;
+    const rotated = rotateBarcodePixels(pixels, fixedAngle);
+    results = await readBarcodePixels(rotated, { ...options, tryHarder: true }, deadline);
+    if (results.some(isAcceptedBarcode)) return restoreRotatedPositions(results, pixels, rotated, fixedAngle);
+    if (data.thorough !== false && performance.now() < deadline) {
+      invertPixels(rotated);
+      results = await readBarcodePixels(rotated, { ...options, tryHarder: true }, deadline);
+      if (results.some(isAcceptedBarcode)) return restoreRotatedPositions(results, pixels, rotated, fixedAngle);
+    }
+  }
+  if (!triedRotation || performance.now() < deadline) results = await readBarcodePixels(pixels, options, deadline);
+  if (!triedRotation && data.orientation && !results.some(isAcceptedBarcode) && performance.now() < deadline) {
     const angle = data.orientation === "auto" ? estimateBarcodeRotation(pixels) : Number(data.orientation);
     if (Number.isFinite(angle) && angle) {
       const rotated = rotateBarcodePixels(pixels, angle);
@@ -253,6 +339,7 @@ async function decodeBarcodePixels(pixels, options, data, deadline) {
         invertPixels(rotated);
         results = await readBarcodePixels(rotated, rotatedOptions, deadline);
       }
+      if (results.some(isAcceptedBarcode)) return restoreRotatedPositions(results, pixels, rotated, angle);
     }
   }
   if (data.thorough !== false && !results.some(isAcceptedBarcode) && performance.now() < deadline) {
@@ -291,42 +378,104 @@ self.onmessage = async ({ data }) => {
     // monopolize the decoder. Direct callers retain the full fallback behavior.
     let deadline = performance.now() + (data.budgetMs > 0 ? data.budgetMs : Infinity);
     let results = [];
-    if (data.focused) {
-      const located = findBarcodeRegions(pixels);
-      // Give even slower devices a decoding attempt after locating the label.
-      deadline = performance.now() + (data.budgetMs > 0 ? data.budgetMs : Infinity);
-      if (located.hasContrast) {
-        const regions = located.regions;
-        const offset = regions.length ? Math.abs(data.regionOffset || 0) % regions.length : 0;
-        const reportRegion = (rect) => {
-          if (data.trackRegions && rect) self.postMessage({ id: data.id, type: "region",
-            region: rect.bounds });
-        };
-        // Send the location immediately, before the potentially slower read.
-        reportRegion(regions[offset]);
-        for (let candidate = 0; candidate < Math.min(2, regions.length); candidate++) {
-          const rect = regions[(offset + candidate) % regions.length];
-          if (performance.now() >= deadline) break;
-          const crop = cropBarcodePixels(pixels, rect);
+    const preferred = data.preferredRegion;
+    if (preferred && [preferred.x, preferred.y, preferred.width, preferred.height].every(Number.isFinite) &&
+        preferred.width > 0 && preferred.height > 0) {
+      // Confirm a successfully read barcode first, with generous quiet-zone
+      // and movement margins. A miss still searches the current full preview.
+      const px = Math.max(24, preferred.width * 0.25), py = Math.max(24, preferred.width * 0.18, preferred.height * 0.65);
+      const x = Math.max(0, Math.floor(preferred.x - px)), y = Math.max(0, Math.floor(preferred.y - py));
+      const width = Math.min(pixels.width, Math.ceil(preferred.x + preferred.width + px)) - x;
+      const height = Math.min(pixels.height, Math.ceil(preferred.y + preferred.height + py)) - y;
+      if (width > 0 && height > 0) {
+        const rect = { x, y, width, height };
+        const crop = cropBarcodePixels(pixels, rect);
+        results = await decodeBarcodePixels(crop, { ...options, tryDownscale: false }, data, deadline);
+        if (results.some(isAcceptedBarcode)) results = offsetBarcodePositions(results, rect);
+      }
+    }
+    if (!results.some(isAcceptedBarcode) && data.focused) {
+      // Read the whole visible crop first. Background text/stripes must not
+      // consume every retry before the real barcode even reaches the reader.
+      const quickOptions = { ...options, tryHarder: false, tryDownscale: false,
+        minLineCount: options.binarizer === "FixedThreshold" ? Math.ceil(options.minLineCount * 1.5) : options.minLineCount };
+      results = await ZXingWASM.readBarcodes(pixels, quickOptions);
+      if (!results.some(isAcceptedBarcode)) {
+        const located = findBarcodeRegions(pixels);
+        // Even a slower device gets a crop attempt after locating the label.
+        deadline = performance.now() + (data.budgetMs > 0 ? data.budgetMs : Infinity);
+        if (located.hasContrast) {
+          const regions = located.regions;
+          const offset = regions.length ? Math.abs(data.regionOffset || 0) % regions.length : 0;
+          const plausible = regions.filter((rect) => rect.barPattern);
+          const remaining = regions.filter((rect) => !rect.barPattern);
+          const ordered = plausible.concat(remaining.map((_, i) => remaining[(offset + i) % remaining.length]));
           const focusedOptions = { ...options, tryDownscale: false };
-          results = await decodeBarcodePixels(crop, focusedOptions, data, deadline);
-          if (results.some(isAcceptedBarcode)) { if (candidate) reportRegion(rect); break; }
-          if (rect.width <= 700 && rect.height <= 700 && performance.now() < deadline) {
-            // Re-create the unmodified crop: inverted retries may have changed it.
-            const enlarged = rotateBarcodePixels(cropBarcodePixels(pixels, rect), 0, 2);
-            results = await decodeBarcodePixels(enlarged,
-              { ...focusedOptions, minLineCount: options.minLineCount * 2 }, data, deadline);
-            if (results.some(isAcceptedBarcode)) { if (candidate) reportRegion(rect); break; }
+          const cropOptions = { ...quickOptions, tryHarder: true };
+          // Dense rows are necessary for short/distant labels. Check each crop
+          // once before spending rotation/contrast retries on a distractor.
+          // Unverified candidates never animate the outline.
+          for (const rect of ordered) {
+            if (performance.now() >= deadline) break;
+            const crop = cropBarcodePixels(pixels, rect);
+            results = await ZXingWASM.readBarcodes(crop, cropOptions);
+            if (results.some(isAcceptedBarcode)) {
+              results = offsetBarcodePositions(results, rect);
+              break;
+            }
+          }
+          // An angled narrow label can fail native horizontal/vertical rows.
+          // Try its own measured angle before costly retries on other regions.
+          for (const rect of ordered) {
+            if (results.some(isAcceptedBarcode) || performance.now() >= deadline) break;
+            const crop = cropBarcodePixels(pixels, rect);
+            const angle = estimateBarcodeRotation(crop);
+            if (!angle) continue;
+            const rotated = rotateBarcodePixels(crop, angle);
+            results = await ZXingWASM.readBarcodes(rotated, cropOptions);
+            if (results.some(isAcceptedBarcode)) {
+              results = offsetBarcodePositions(restoreRotatedPositions(results, crop, rotated, angle), rect);
+              break;
+            }
+          }
+          for (const rect of ordered.slice(0, 2)) {
+            if (results.some(isAcceptedBarcode) || performance.now() >= deadline) break;
+            const crop = cropBarcodePixels(pixels, rect);
+            results = await decodeBarcodePixels(crop, focusedOptions, data, deadline);
+            if (results.some(isAcceptedBarcode)) {
+              results = offsetBarcodePositions(results, rect);
+              break;
+            }
+            if (rect.width <= 700 && rect.height <= 700 && performance.now() < deadline) {
+              // Re-create the original crop after potentially inverted retries.
+              const original = cropBarcodePixels(pixels, rect);
+              const enlarged = rotateBarcodePixels(original, 0, 2);
+              results = await decodeBarcodePixels(enlarged,
+                { ...focusedOptions, minLineCount: options.minLineCount * 2 }, data, deadline);
+              if (results.some(isAcceptedBarcode)) {
+                results = offsetBarcodePositions(restoreRotatedPositions(results, original, enlarged, 0, 2), rect);
+                break;
+              }
+            }
+          }
+          if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+            results = await decodeBarcodePixels(pixels, options, data, deadline);
           }
         }
-        if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
-          results = await decodeBarcodePixels(pixels, options, data, deadline);
-        }
       }
-    } else {
+    } else if (!results.some(isAcceptedBarcode)) {
       results = await decodeBarcodePixels(pixels, options, data, deadline);
     }
     const result = results.find(isAcceptedBarcode);
+    if (data.trackRegions && result?.position) {
+      const points = Object.values(result.position);
+      if (points.length === 4 && points.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))) {
+        const x = Math.min(...points.map((p) => p.x)), y = Math.min(...points.map((p) => p.y));
+        const right = Math.max(...points.map((p) => p.x)), bottom = Math.max(...points.map((p) => p.y));
+        self.postMessage({ id: data.id, type: "region",
+          region: { x, y, width: Math.max(1, right - x), height: Math.max(1, bottom - y) } });
+      }
+    }
     let text = result?.text || "";
     // ZXing 3 normalizes UPC content to EAN-13 internally.
     if (result?.format === "UPCA" && /^0\d{12}$/.test(text)) text = text.slice(1);
