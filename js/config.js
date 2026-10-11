@@ -20,7 +20,6 @@ const CONFIG = {
     printRequestStorageKey: "web_barcode_scanner_print_requests_v1",
     printTunnelStorageKey: "web_barcode_scanner_print_tunnel_v1",
     cameraStorageKey: "web_barcode_scanner_camera",
-    roiStorageKey: "web_barcode_scanner_roi",
     productInfoSlideStorageKey: "web_barcode_scanner_pi_slide",
     scrollLockStorageKey: "web_barcode_scanner_scroll_lock",
     scanIntervalMs: 16,

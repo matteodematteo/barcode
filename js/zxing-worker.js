@@ -200,7 +200,11 @@ function findBarcodeRegions(pixels) {
     const w = Math.min(width, right * tile + padding) - x;
     const h = Math.min(height, bottom * tile + padding) - y;
     if (w * h >= width * height * 0.8) continue;
-    regions.push({ x, y, width: w, height: h, score: score / Math.sqrt(w * h) });
+    regions.push({ x, y, width: w, height: h, score: score / Math.sqrt(w * h),
+      // Display the detected bars; quiet-zone padding is only for decoding.
+      bounds: { x: left * tile, y: top * tile,
+        width: Math.min(width, right * tile) - left * tile,
+        height: Math.min(height, bottom * tile) - top * tile } });
   }
   regions.sort((a, b) => b.score - a.score);
   let hasContrast = lightest > darkest;
@@ -294,19 +298,25 @@ self.onmessage = async ({ data }) => {
       if (located.hasContrast) {
         const regions = located.regions;
         const offset = regions.length ? Math.abs(data.regionOffset || 0) % regions.length : 0;
+        const reportRegion = (rect) => {
+          if (data.trackRegions && rect) self.postMessage({ id: data.id, type: "region",
+            region: rect.bounds });
+        };
+        // Send the location immediately, before the potentially slower read.
+        reportRegion(regions[offset]);
         for (let candidate = 0; candidate < Math.min(2, regions.length); candidate++) {
           const rect = regions[(offset + candidate) % regions.length];
           if (performance.now() >= deadline) break;
           const crop = cropBarcodePixels(pixels, rect);
           const focusedOptions = { ...options, tryDownscale: false };
           results = await decodeBarcodePixels(crop, focusedOptions, data, deadline);
-          if (results.some(isAcceptedBarcode)) break;
+          if (results.some(isAcceptedBarcode)) { if (candidate) reportRegion(rect); break; }
           if (rect.width <= 700 && rect.height <= 700 && performance.now() < deadline) {
             // Re-create the unmodified crop: inverted retries may have changed it.
             const enlarged = rotateBarcodePixels(cropBarcodePixels(pixels, rect), 0, 2);
             results = await decodeBarcodePixels(enlarged,
               { ...focusedOptions, minLineCount: options.minLineCount * 2 }, data, deadline);
-            if (results.some(isAcceptedBarcode)) break;
+            if (results.some(isAcceptedBarcode)) { if (candidate) reportRegion(rect); break; }
           }
         }
         if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {

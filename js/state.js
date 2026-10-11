@@ -97,7 +97,6 @@ const state = {
     productActivityRefreshAllInFlight: false,
     historyEditSuccessTimer: 0,
     historyEditCloseTimer: 0,
-    roi: { width: 0.8, height: 0.8 },
     pendingConfirmCode: "",
     pendingConfirmCount: 0,
   };

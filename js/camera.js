@@ -557,39 +557,6 @@ function getCoverSourceRect(videoWidth, videoHeight, containerWidth, containerHe
 }
 
 
-function getRoiRect() {
-  const width = state.roi.width;
-  const height = state.roi.height;
-  return {
-    left: (1 - width) / 2,
-    top: (1 - height) / 2,
-    width: width,
-    height: height
-  };
-}
-
-
-function getRoiCropRect(videoWidth, videoHeight) {
-  const container = state.els.previewFrame;
-  const containerWidth = (container && container.clientWidth) || videoWidth;
-  const containerHeight = (container && container.clientHeight) || videoHeight;
-  const cover = getCoverSourceRect(videoWidth, videoHeight, containerWidth, containerHeight);
-  const roi = getRoiRect();
-
-  const sx = cover.offsetX + roi.left * cover.visibleWidth;
-  const sy = cover.offsetY + roi.top * cover.visibleHeight;
-  const sw = roi.width * cover.visibleWidth;
-  const sh = roi.height * cover.visibleHeight;
-
-  return {
-    sx: Math.max(0, Math.round(sx)),
-    sy: Math.max(0, Math.round(sy)),
-    sw: Math.max(1, Math.round(Math.min(sw, videoWidth))),
-    sh: Math.max(1, Math.round(Math.min(sh, videoHeight)))
-  };
-}
-
-
 function drawDetectionFrame(mode, maxOutputSize = 1920) {
   const video = state.els.cameraPreview;
   const canvas = state.els.captureCanvas;
@@ -608,8 +575,8 @@ function drawDetectionFrame(mode, maxOutputSize = 1920) {
       container?.clientWidth || videoWidth, container?.clientHeight || videoHeight);
     // Search the center first without spending every pass on the whole preview.
     // The following full-preview pass still finds labels outside this band.
-    const widthRatio = mode === "visible" ? 1 : Math.min(1, Math.max(0.85, state.roi.width));
-    const heightRatio = mode === "visible" ? 1 : Math.min(0.65, Math.max(0.5, state.roi.height));
+    const widthRatio = mode === "visible" ? 1 : 0.85;
+    const heightRatio = mode === "visible" ? 1 : 0.65;
     sw = cover.visibleWidth * widthRatio;
     sh = cover.visibleHeight * heightRatio;
     if (mode === "detail") {
@@ -620,12 +587,6 @@ function drawDetectionFrame(mode, maxOutputSize = 1920) {
     }
     sx = cover.offsetX + (cover.visibleWidth - sw) / 2;
     sy = cover.offsetY + (cover.visibleHeight - sh) / 2;
-  } else if (mode === "roi") {
-    const roiRect = getRoiCropRect(videoWidth, videoHeight);
-    sx = roiRect.sx;
-    sy = roiRect.sy;
-    sw = roiRect.sw;
-    sh = roiRect.sh;
   } else if (mode === "wide") {
     sw = Math.max(1, Math.floor(videoWidth * (isiOS ? 0.98 : 0.94)));
     sh = Math.max(1, Math.floor(videoHeight * (isiOS ? 0.52 : 0.38)));
@@ -663,136 +624,51 @@ function drawDetectionFrame(mode, maxOutputSize = 1920) {
 
   context.imageSmoothingEnabled = mode === "detail";
   context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  state.captureFrameGeometry = { sx, sy, sw, sh, outputWidth, outputHeight, videoWidth, videoHeight };
   return canvas;
 }
 
 
-const ROI_MIN_RATIO = 0.12;
+// Reuse regions already located in the decoding worker; no second detector or
+// extra video read is needed to animate the outline.
+let barcodeTrackingTimer = 0;
 
-const ROI_MAX_RATIO = 1;
-
-
-function loadRoiState() {
-  try {
-    const raw = localStorage.getItem(CONFIG.roiStorageKey);
-    if (!raw) {
-      return;
-    }
-    const parsed = JSON.parse(raw);
-    const width = Number(parsed?.width);
-    const height = Number(parsed?.height);
-    if (Number.isFinite(width) && width >= ROI_MIN_RATIO && width <= ROI_MAX_RATIO) {
-      state.roi.width = width;
-    }
-    if (Number.isFinite(height) && height >= ROI_MIN_RATIO && height <= ROI_MAX_RATIO) {
-      state.roi.height = height;
-    }
-  } catch {
-    // Ignore corrupt/missing saved ROI size and keep the default.
-  }
+function resetBarcodeTracking() {
+  clearTimeout(barcodeTrackingTimer);
+  barcodeTrackingTimer = 0;
+  if (state.els.barcodeTracker) state.els.barcodeTracker.hidden = true;
 }
 
-
-function saveRoiState() {
-  try {
-    localStorage.setItem(CONFIG.roiStorageKey, JSON.stringify({
-      width: state.roi.width,
-      height: state.roi.height
-    }));
-  } catch {
-    // Ignore storage failures (e.g. private browsing quota).
-  }
+function getBarcodeTrackingRect(region, frame, width, height) {
+  if (!region || !frame || !width || !height) return null;
+  const cover = getCoverSourceRect(frame.videoWidth, frame.videoHeight, width, height);
+  const scaleX = width / cover.visibleWidth, scaleY = height / cover.visibleHeight;
+  const x = (frame.sx + region.x * frame.sw / frame.outputWidth - cover.offsetX) * scaleX;
+  const y = (frame.sy + region.y * frame.sh / frame.outputHeight - cover.offsetY) * scaleY;
+  const right = x + region.width * frame.sw / frame.outputWidth * scaleX;
+  const bottom = y + region.height * frame.sh / frame.outputHeight * scaleY;
+  if (![x, y, right, bottom].every(Number.isFinite) || right <= 0 || bottom <= 0 || x >= width || y >= height) return null;
+  const left = Math.max(0, x - 4), top = Math.max(0, y - 4);
+  return { x: left, y: top, width: Math.min(width, right + 4) - left,
+    height: Math.min(height, bottom + 4) - top };
 }
 
-
-function applyRoiBoxStyle() {
-  const roiBox = state.els.roiBox;
-  if (!roiBox) {
-    return;
-  }
-  const roi = getRoiRect();
-  roiBox.style.left = `${roi.left * 100}%`;
-  roiBox.style.top = `${roi.top * 100}%`;
-  roiBox.style.width = `${roi.width * 100}%`;
-  roiBox.style.height = `${roi.height * 100}%`;
-}
-
-
-function initRoiResize() {
-  const handle = state.els.roiResizeHandle;
-  const container = state.els.previewFrame;
-  if (!handle || !container) {
-    return;
-  }
-
-  handle.addEventListener("pointerdown", function (event) {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const rect = container.getBoundingClientRect();
-    if (!rect.width || !rect.height) {
-      return;
-    }
-
-    state.roiDrag = {
-      pointerId: event.pointerId,
-      startWidth: state.roi.width,
-      startHeight: state.roi.height
-    };
-
-    try {
-      handle.setPointerCapture(event.pointerId);
-    } catch {
-      // Ignore browsers that do not support pointer capture here.
-    }
-  });
-
-  handle.addEventListener("pointermove", function (event) {
-    const drag = state.roiDrag;
-    if (!drag || drag.pointerId !== event.pointerId) {
-      return;
-    }
-
-    const rect = container.getBoundingClientRect();
-    const centerX = rect.width / 2;
-    const centerY = rect.height / 2;
-    const pointerX = event.clientX - rect.left;
-    const pointerY = event.clientY - rect.top;
-
-    // The handle sits at the box's bottom-right corner. Since the box is
-    // always centered, distance from the container center to the pointer
-    // is the box's half-width/half-height — resizing grows/shrinks the
-    // box symmetrically in all directions, keeping it centered live.
-    let widthRatio = ((pointerX - centerX) / rect.width) * 2;
-    let heightRatio = ((pointerY - centerY) / rect.height) * 2;
-
-    widthRatio = Math.min(ROI_MAX_RATIO, Math.max(ROI_MIN_RATIO, widthRatio));
-    heightRatio = Math.min(ROI_MAX_RATIO, Math.max(ROI_MIN_RATIO, heightRatio));
-
-    state.roi.width = widthRatio;
-    state.roi.height = heightRatio;
-    applyRoiBoxStyle();
-  });
-
-  function endDrag(event) {
-    const drag = state.roiDrag;
-    if (!drag || drag.pointerId !== event.pointerId) {
-      return;
-    }
-    state.roiDrag = null;
-
-    const sizeChanged =
-      Math.abs(state.roi.width - drag.startWidth) > 0.005 ||
-      Math.abs(state.roi.height - drag.startHeight) > 0.005;
-
-    if (sizeChanged) {
-      saveRoiState();
-      // The next frame uses the new ROI without restarting or moving the preview.
-    }
-  }
-
-  handle.addEventListener("pointerup", endDrag);
-  handle.addEventListener("pointercancel", endDrag);
+function updateBarcodeTracking(region, frame, session) {
+  // Late worker replies from a closed/replaced camera must never revive it.
+  if (session !== state.scanSession || !state.isScanning || !state.capturePageOpen || document.hidden) return;
+  const box = state.els.barcodeTracker, preview = state.els.previewFrame;
+  if (!box || !preview) return;
+  const rect = getBarcodeTrackingRect(region, frame, preview.clientWidth, preview.clientHeight);
+  if (!rect) return;
+  const wasHidden = box.hidden;
+  // Place the first outline directly; only subsequent positions animate.
+  box.style.transition = wasHidden ? "none" : "";
+  box.style.transform = `translate(${rect.x}px, ${rect.y}px)`;
+  box.style.width = `${rect.width}px`;
+  box.style.height = `${rect.height}px`;
+  box.hidden = false;
+  clearTimeout(barcodeTrackingTimer);
+  barcodeTrackingTimer = setTimeout(resetBarcodeTracking, 350);
 }
 
 
@@ -804,6 +680,7 @@ async function detectBarcodeInFrame() {
   const confirming = Boolean(state.pendingConfirmCode && state.lastDetectionPass);
   const pass = confirming ? state.lastDetectionPass : makeDetectionPass(attempt);
   const canvas = drawDetectionFrame(pass.mode);
+  const frameGeometry = state.captureFrameGeometry;
   const context = state.captureContext || canvas.getContext("2d", { willReadFrequently: true });
   const image = context.getImageData(0, 0, canvas.width, canvas.height);
   const text = await detector.detect(image,
@@ -811,7 +688,8 @@ async function detectBarcodeInFrame() {
     { thorough: pass.thorough, enhance: pass.enhance, orientation: pass.orientation,
       downscale: pass.mode === "visible", minLineCount: 2,
       focused: pass.focused, budgetMs: 80, binarizer: pass.binarizer,
-      regionOffset: pass.regionOffset });
+      regionOffset: pass.regionOffset,
+      onRegion: (region) => updateBarcodeTracking(region, frameGeometry, session) });
   if (session === state.scanSession) {
     state.detectionAttempt = attempt + 1;
     state.lastDetectionPass = text ? pass : null;
@@ -1250,7 +1128,7 @@ function initPreviewFocus() {
   let tap = null;
   preview.addEventListener("pointerdown", function (event) {
     tap = null;
-    if (!event.isPrimary || event.button !== 0 || event.target.closest("#roiResizeHandle, button")) return;
+    if (!event.isPrimary || event.button !== 0 || event.target.closest("button")) return;
     tap = { id: event.pointerId, x: event.clientX, y: event.clientY, time: Date.now() };
   }, { passive: true });
   preview.addEventListener("pointermove", function (event) {
@@ -1456,6 +1334,7 @@ async function startScanning() {
   }
   if (!state.capturePageOpen || generation !== state.captureGeneration || session !== state.scanSession) return;
 
+  resetBarcodeTracking();
   scheduleFocusRefresh(state.track, { newScan: true });
   state.detectionAttempt = 0;
   state.lastDetectionPass = null;
@@ -1474,6 +1353,7 @@ async function startScanning() {
 
 function stopScanning(keepStatusMessage) {
   state.scanSession += 1;
+  resetBarcodeTracking();
   clearScanTimeoutTimer();
   cleanupScanTimer();
   state.isScanning = false;

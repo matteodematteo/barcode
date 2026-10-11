@@ -4,16 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f5f6f2" />
-  <meta name="webscanner-version" content="141" />
+  <meta name="webscanner-version" content="142" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Web Scanner" />
-  <link rel="manifest" href="manifest.webmanifest?v=141" />
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=141" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=141" />
+  <link rel="manifest" href="manifest.webmanifest?v=142" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=142" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=142" />
   <title>Web Barcode Scanner</title>
-  <link rel="preload" href="js/app.bundle.js?v=141" as="script" />
-  <link rel="preload" href="css/interface.bundle.css?v=141" as="style" />
+  <link rel="preload" href="js/app.bundle.js?v=142" as="script" />
+  <link rel="preload" href="css/interface.bundle.css?v=142" as="style" />
   <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
        round-trips for the above-the-fold shell (base + scanner + layout +
        essential components). The remaining interface styles load as one small sheet below. -->
@@ -87,7 +87,7 @@
       aspect-ratio: 20/9; overflow: hidden; border-radius: var(--radius-lg);
       background: linear-gradient(180deg,rgba(6,10,14,.12),rgba(6,10,14,.45)), var(--surface);
     }
-    #cameraPreview, #cameraPreviewQuagga, .preview-placeholder, .preview-grid, .scan-line {
+    #cameraPreview, #cameraPreviewQuagga, .preview-placeholder, .preview-grid {
       position: absolute; inset: 0;
     }
     #cameraPreview, #cameraPreviewQuagga { width: 100%; height: 100%; display: block; background: #05080b; }
@@ -103,30 +103,6 @@
       background-size: 22% 22%;
       mask-image: linear-gradient(180deg, rgba(0,0,0,.72), transparent 85%);
     }
-    .scan-window {
-      position: absolute; border: 2px solid rgba(255,255,255,.92); border-radius: 24px;
-      box-shadow: 0 0 0 999px rgba(6,10,14,.24); pointer-events: none; touch-action: none;
-    }
-    .roi-handle {
-      position: absolute; right: -12px; bottom: -12px; width: 32px; height: 32px;
-      border-radius: 50%; background: var(--accent, #bf5a31); border: 2.5px solid #fff;
-      box-shadow: 0 4px 12px rgba(0,0,0,.45); cursor: se-resize;
-      pointer-events: auto !important; touch-action: none; z-index: 10;
-      display: flex; align-items: center; justify-content: center;
-      transition: transform 120ms ease;
-    }
-    .roi-handle:active { transform: scale(1.2); background: var(--accent-strong, #a34a26); }
-    .roi-handle::after {
-      content: ""; width: 7px; height: 7px; border-right: 2px solid #fff;
-      border-bottom: 2px solid #fff; margin-top: -2px; margin-left: -2px;
-    }
-    .scan-line {
-      top: 14%; bottom: auto; height: 3px; left: 14%; right: 14%; border-radius: 999px;
-      background: linear-gradient(90deg, transparent, rgba(255,175,141,.96), transparent);
-      box-shadow: 0 0 18px rgba(255,146,92,.95); opacity: 0; transform: translateY(0);
-    }
-    .preview-frame.is-scanning .scan-line { opacity: 1; animation: scanMove 1.8s linear infinite; }
-    @keyframes scanMove { 0%{transform:translateY(0)} 50%{transform:translateY(56vw)} 100%{transform:translateY(0)} }
     .preview-placeholder {
       display: grid; place-items: center; padding: 16px; text-align: center;
       color: rgba(255,255,255,.9);
@@ -368,13 +344,13 @@
   <!-- These sheets affect the visible page geometry. Keep them render-blocking so
        browsers paint the completed interface once instead of restyling sections
        progressively on a slow connection. -->
-  <link rel="stylesheet" href="css/interface.bundle.css?v=141" />
+  <link rel="stylesheet" href="css/interface.bundle.css?v=142" />
 </head>
 <body>
   <main class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=141" width="34" height="34" alt="" decoding="async" /></span>
+        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=142" width="34" height="34" alt="" decoding="async" /></span>
         <div><h1>Web Scanner</h1></div>
       </div>
       <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
@@ -557,10 +533,9 @@
         <video id="cameraPreview" playsinline webkit-playsinline muted disablepictureinpicture></video>
         <div id="cameraPreviewQuagga" hidden></div>
         <div class="preview-grid" aria-hidden="true"></div>
-        <div class="scan-window" id="roiBox" style="left:10%;top:10%;width:80%;height:80%;" aria-hidden="true">
-          <div class="roi-handle" id="roiResizeHandle"></div>
+        <div class="barcode-tracker" id="barcodeTracker" aria-hidden="true" hidden>
+          <span></span><span></span><span></span><span></span>
         </div>
-        <div class="scan-line" aria-hidden="true"></div>
 
         <div class="preview-meta">
           <div class="badge" id="cameraBadge">Preview off</div>
@@ -778,6 +753,6 @@
     <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
   </div>
   <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
-  <script src="js/app.bundle.js?v=141" defer></script>
+  <script src="js/app.bundle.js?v=142" defer></script>
 </body>
 </html>

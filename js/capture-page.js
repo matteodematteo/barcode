@@ -70,10 +70,9 @@ function loadCaptureEngine() {
   if (captureEnginePromise) return captureEnginePromise;
   captureEnginePromise = new Promise(function (resolve, reject) {
     const script = document.createElement("script");
-    script.src = "js/capture.bundle.js?v=141";
+    script.src = "js/capture.bundle.js?v=142";
     script.onload = function () {
       captureEngineLoaded = true;
-      initRoiResize();
       initPreviewFocus();
       resolve();
     };
@@ -108,8 +107,6 @@ async function openCapturePage() {
   try {
     await loadCaptureEngine();
     if (!state.capturePageOpen || generation !== state.captureGeneration) return;
-    loadRoiState();
-    applyRoiBoxStyle();
     await startScanning();
   } catch (error) {
     if (!state.capturePageOpen || generation !== state.captureGeneration || error.name === "AbortError") return;
