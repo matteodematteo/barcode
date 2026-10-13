@@ -70,7 +70,7 @@ function loadCaptureEngine() {
   if (captureEnginePromise) return captureEnginePromise;
   captureEnginePromise = new Promise(function (resolve, reject) {
     const script = document.createElement("script");
-    script.src = "js/capture.bundle.js?v=145";
+    script.src = "js/capture.bundle.js?v=147";
     script.onload = function () {
       captureEngineLoaded = true;
       initPreviewFocus();
@@ -93,7 +93,11 @@ async function openCapturePage() {
   const generation = ++state.captureGeneration;
   // Begin the hardware request before focus/layout work in the capture route.
   performance.mark("webscanner-capture-request");
-  requestCaptureStream(state.activeDeviceId);
+  const reuseCamera = state.isCameraRunning && state.track?.readyState === "live" && state.stream;
+  if (!reuseCamera) {
+    if (state.stream) releaseCaptureHardware();
+    requestCaptureStream(state.activeDeviceId);
+  }
   state.captureReturnFocus = document.activeElement;
   state.captureMainUrl = location.pathname + location.search + location.hash;
   history.pushState({ webscannerCapture: true }, "", "#capture");
@@ -102,8 +106,10 @@ async function openCapturePage() {
   document.body.classList.add("is-capturing");
   state.els.captureBackBtn.focus({ preventScroll: true });
   state.els.captureRetryBtn.hidden = true;
+  state.els.previewPlaceholder.hidden = Boolean(reuseCamera);
+  state.els.previewPlaceholder.style.display = reuseCamera ? "none" : "grid";
   state.els.previewPlaceholder.textContent = "Opening camera…";
-  setStatus("Opening camera…");
+  setStatus(reuseCamera ? "Starting capture…" : "Opening camera…");
   try {
     await loadCaptureEngine();
     if (!state.capturePageOpen || generation !== state.captureGeneration) return;
@@ -126,7 +132,21 @@ function closeCapturePage(options) {
   if (!state.capturePageOpen) return;
   state.capturePageOpen = false;
   state.captureGeneration += 1;
-  releaseCaptureHardware();
+  if (options?.captured && !document.hidden && state.track?.readyState === "live") {
+    // Keep the hardware ready behind the main screen; never decode between taps.
+    stopScanning(true);
+    stopPreviewWatchdog();
+    clearFocusRefreshTimers();
+    clearResumePreviewTimer();
+    if (state.torchOn) {
+      const track = state.track;
+      applyCameraTrackConstraints(track, { torch: false }, state.scanSession).then(function (applied) {
+        if (applied) syncTorchSupport();
+      }).catch(function () {});
+    }
+  } else {
+    releaseCaptureHardware();
+  }
   state.els.capturePage.hidden = true;
   document.querySelector("main").inert = false;
   document.body.classList.remove("is-capturing");
@@ -153,7 +173,10 @@ function initCapturePage() {
   window.addEventListener("hashchange", function () {
     if (location.hash !== "#capture") closeCapturePage();
   });
-  window.addEventListener("pagehide", function () { closeCapturePage(); });
+  window.addEventListener("pagehide", function () {
+    closeCapturePage();
+    releaseCaptureHardware();
+  });
   document.addEventListener("keydown", function (event) {
     if (!state.capturePageOpen) return;
     if (event.key === "Escape") {

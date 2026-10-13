@@ -3,7 +3,10 @@
 A dependency-free barcode scanner and product lookup app. Tap **Capture barcode**
 to open the dedicated capture screen. A barcode confirmed on two fresh camera
 frames returns to the main screen immediately; product lookup continues there.
-Back, Escape, capture timeout, and backgrounding release the camera.
+After capture, decoding pauses and the camera stays active behind the main
+screen for the next Capture tap. Back, Escape, leaving the page, and
+backgrounding the app release the camera. Returning to the main screen after
+backgrounding leaves it off until Capture is tapped again.
 
 ## Run locally
 
@@ -46,7 +49,8 @@ resize mode. There is no resolution switch during scanning. Custom focus
 constraints run after playback begins and preserve the requested resolution. Pointer/focus
 on Capture also warms the decoder without opening hardware.
 The decoder runs in a worker and transfers pixel buffers without
-blocking the interface. The worker stays ready for subsequent captures. Saved
+blocking the interface. The worker and live camera stay ready for subsequent
+captures while the app remains visible. Saved
 authentication refreshes in the background on startup, when the app reopens,
 and after reconnecting. Product requests share an in-flight refresh; startup and
 capture stay usable while login completes. The service worker
@@ -67,8 +71,12 @@ an estimated-angle correction in the worker, with additional angle passes for
 cluttered backgrounds. Barcode regions are located again on each frame;
 enlargement, rotation and lighting correction prefer those small regions.
 Whole-preview reads still cover larger labels and background clutter. Optional
-fallbacks yield to fresh frames after their work budget instead of processing
-all heavy retries on a moving frame. Successful ordinary reads skip extra work.
+fallbacks share one budget per frame, including candidate location: most attempts
+allow 60 ms, with 240 ms every fourth attempt and when confirming a read.
+Budget expiry skips further retries so capture can use a newer frame. A running
+WASM read or pixel transform finishes before yielding, so these are retry budgets
+rather than hard capture-time limits. Scheduled angle passes run before candidate
+search to preserve difficult angled reads. Successful ordinary reads skip extra work.
 Android and iPhone share the same typed-array implementation, without requiring
 OffscreenCanvas or native BarcodeDetector. Capture keeps its 1080p stream and
 requires two matching fresh frames before returning to the main page.
@@ -95,6 +103,9 @@ With the local server running, install the optional test dependency and run:
 python -m pip install playwright
 python tests/test_capture.py
 python tests/test_camera_startup.py
+python tests/test_camera_retention.py
+python tests/test_frame_budget.py
+python tests/test_frame_budget.py --engine webkit
 python tests/test_sales_period.py
 ```
 
@@ -114,7 +125,7 @@ short or incomplete reads that have no mandatory checksum.
 WebKit exercises real decoding with mocked permissions; physical phone camera
 autofocus and lighting still require device testing.
 
-Windows mobile-browser QA for this release passed with Playwright 1.58.0 and
+Earlier Windows mobile-browser QA passed with Playwright 1.58.0 and
 WebKit 26.0. The locally installed Playwright 1.63.0 / WebKit 26.6 runtime timed
 out even on blank pages, so a separate test runtime was used. Subsequent WebKit
 startup attempts were also intermittent; the successful run covered all seven
@@ -124,7 +135,8 @@ Tests use installed Microsoft Edge, fake cameras, an independently encoded
 EAN-13 fixture, and stubbed product lookups. They never contact the live ERP.
 They cover responsive layout, no camera hardware on startup, immediate return,
 repeat capture, cancellation during permissions, Back/Escape, denied permissions,
-camera release, and installed offline startup/capture. Screenshots and fixtures
+camera reuse between captures, release on backgrounding/navigation, and installed
+offline startup/capture. Screenshots and fixtures
 are written to the system temporary `webscanner-qa` directory.
 The startup check also holds the camera bundle back to verify early preview,
 checks full-HD startup and stable resolution on one stream, and covers canceled focus/torch changes.

@@ -687,7 +687,7 @@ async function detectBarcodeInFrame() {
     CONFIG.detectorFormats.map((format) => ZXING_FORMAT_MAP[format]).filter(Boolean),
     { thorough: pass.thorough, enhance: pass.enhance, orientation: pass.orientation,
       downscale: pass.mode === "visible", minLineCount: 2,
-      focused: pass.focused, budgetMs: 80, binarizer: pass.binarizer,
+      focused: pass.focused, budgetMs: confirming ? 240 : pass.budgetMs, binarizer: pass.binarizer,
       regionOffset: pass.regionOffset,
       preferredRegion: confirming && state.lastBarcodeRegion ? {
         x: (state.lastBarcodeRegion.x - frameGeometry.sx) * frameGeometry.outputWidth / frameGeometry.sw,
@@ -722,6 +722,10 @@ function makeDetectionPass(attempt) {
     // retries only run every fourth pass.
     thorough: true,
     enhance: phase === 3,
+    // Prefer another camera frame after a short attempt; every fourth pass
+    // gets more time for angled, faint or distant labels. Confirmation reuses
+    // the successful crop and gets time to verify it on the next fresh frame.
+    budgetMs: phase === 3 ? 240 : 60,
     // Periodic whole-preview reads and rotating candidate priority prevent
     // background text from starving another barcode region.
     // Dedicated whole-preview passes also try fixed angles, independent of
@@ -1363,6 +1367,10 @@ async function startScanning() {
   // Camera preview works fully offline (getUserMedia needs no network).
   if (!state.isCameraRunning) {
     await startCamera(state.activeDeviceId);
+  } else {
+    // Offscreen video may have been paused by the browser between captures.
+    await state.els.cameraPreview.play();
+    startPreviewWatchdog();
   }
 
   if (!state.capturePageOpen || generation !== state.captureGeneration || document.hidden || state.isScanning) return;

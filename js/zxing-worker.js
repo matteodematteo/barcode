@@ -405,6 +405,7 @@ function cropBarcodePixels(pixels, rect) {
 }
 
 async function readBarcodePixels(pixels, options, deadline = Infinity) {
+  if (performance.now() >= deadline) return [];
   const initialOptions = options.binarizer === "FixedThreshold"
     ? { ...options, minLineCount: Math.ceil(options.minLineCount * 1.5) } : options;
   let results = await ZXingWASM.readBarcodes(pixels, initialOptions);
@@ -445,6 +446,7 @@ function offsetBarcodePositions(results, rect) {
 }
 
 async function decodeBarcodePixels(pixels, options, data, deadline) {
+  if (performance.now() >= deadline) return [];
   let results = [], triedRotation = false;
   const fixedAngle = data.orientation === "auto" ? 0 : Number(data.orientation);
   if (Number.isFinite(fixedAngle) && fixedAngle) {
@@ -479,11 +481,13 @@ async function decodeBarcodePixels(pixels, options, data, deadline) {
     results = await readBarcodePixels(pixels, options, deadline);
     if (data.enhance !== false && !results.some(isAcceptedBarcode) && performance.now() < deadline) {
       invertPixels(pixels);
-      if (prepareContrast(pixels)) {
+      if (prepareContrast(pixels) && performance.now() < deadline) {
         const enhancedOptions = { ...options, binarizer: "FixedThreshold", minLineCount: Math.ceil(options.minLineCount * 1.5) };
-        results = await ZXingWASM.readBarcodes(enhanceContrast(pixels), enhancedOptions);
+        const enhanced = enhanceContrast(pixels);
+        if (performance.now() < deadline) results = await ZXingWASM.readBarcodes(enhanced, enhancedOptions);
         if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
-          results = await ZXingWASM.readBarcodes(enhanceContrast(pixels, true), enhancedOptions);
+          const inverted = enhanceContrast(pixels, true);
+          if (performance.now() < deadline) results = await ZXingWASM.readBarcodes(inverted, enhancedOptions);
         }
       }
     }
@@ -506,10 +510,12 @@ self.onmessage = async ({ data }) => {
       minLineCount: Math.max(2, data.minLineCount || 2),
       binarizer: data.binarizer || "LocalAverage"
     };
-    // The production page bounds retries so a moving/blurred frame cannot
-    // monopolize the decoder. Direct callers retain the full fallback behavior.
-    let deadline = performance.now() + (data.budgetMs > 0 ? data.budgetMs : Infinity);
-    let results = [], focusTarget = null;
+    // One deadline covers the entire frame, including locating candidates.
+    // Never restart it for another stage. An individual WASM read cannot be
+    // interrupted, but an expired budget must not start further retries.
+    // Direct callers without a budget retain the full fallback behavior.
+    const deadline = performance.now() + (data.budgetMs > 0 ? data.budgetMs : Infinity);
+    let results = [], focusTarget = null, triedScheduledAngle = false;
     const preferred = data.preferredRegion;
     if (preferred && [preferred.x, preferred.y, preferred.width, preferred.height].every(Number.isFinite) &&
         preferred.width > 0 && preferred.height > 0) {
@@ -526,7 +532,7 @@ self.onmessage = async ({ data }) => {
         results = await ZXingWASM.readBarcodes(crop, confirmOptions);
         if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
           const normalized = normalizeBarcodePixels(crop, 1);
-          if (normalized) results = await ZXingWASM.readBarcodes(normalized, confirmOptions);
+          if (normalized && performance.now() < deadline) results = await ZXingWASM.readBarcodes(normalized, confirmOptions);
         }
         if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
           results = await decodeBarcodePixels(crop, confirmOptions, data, deadline);
@@ -534,16 +540,25 @@ self.onmessage = async ({ data }) => {
         if (results.some(isAcceptedBarcode)) results = offsetBarcodePositions(results, rect);
       }
     }
-    if (!results.some(isAcceptedBarcode)) {
+    if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
       // Sparse full-image rows are cheap. Reflective shelves need local colour
       // correction, rather than repeated dense reads of the entire scene.
       const quick = { ...options, tryHarder: false, tryDownscale: false, binarizer: "LocalAverage" };
       results = await ZXingWASM.readBarcodes(pixels, quick);
-      if (!results.some(isAcceptedBarcode)) {
+      const scheduledAngle = data.orientation === "auto" ? 0 : Number(data.orientation);
+      if (!results.some(isAcceptedBarcode) && Number.isFinite(scheduledAngle) && scheduledAngle &&
+          performance.now() < deadline) {
+        // Give the occasional scheduled angle its turn before locating more
+        // candidates can spend this frame's shared budget on packaging edges.
+        triedScheduledAngle = true;
+        results = await decodeBarcodePixels(pixels, options, data, deadline);
+      }
+      if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
         const panels = findColourLabelRegions(pixels);
         if (panels.length) {
           const local = [];
           for (const panel of panels) {
+            if (performance.now() >= deadline) break;
             // Wide coloured packaging headers are still searched globally;
             // they must not lead ahead of a compact price-label barcode.
             if (panel.width > pixels.width * 0.7) continue;
@@ -561,24 +576,24 @@ self.onmessage = async ({ data }) => {
             }
           }
           local.sort((a, b) => b.score - a.score);
-          const regions = local.concat(findBarcodeStrips(pixels));
+          const regions = performance.now() < deadline ? local.concat(findBarcodeStrips(pixels)) : local;
           const dense = { ...quick, tryHarder: true };
-          deadline = performance.now() + (data.budgetMs > 0 ? data.budgetMs : Infinity);
           // Try each candidate once before rotating or enlarging a distractor.
           // Original colour can read Code128 even when a green plane cannot.
           for (const rect of regions) {
             if (performance.now() >= deadline) break;
             const crop = cropBarcodePixels(pixels, rect);
+            if (performance.now() >= deadline) break;
             results = await ZXingWASM.readBarcodes(crop, dense);
             if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
               const normalized = normalizeBarcodePixels(crop, 1, rect.core);
-              if (normalized) results = await ZXingWASM.readBarcodes(normalized, dense);
+              if (normalized && performance.now() < deadline) results = await ZXingWASM.readBarcodes(normalized, dense);
             }
             if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
               // Video colour conversion can weaken edge rows. Include the
               // quiet-zone intensity range before spending rotation retries.
               const normalized = normalizeBarcodePixels(crop, 1);
-              if (normalized) results = await ZXingWASM.readBarcodes(normalized, dense);
+              if (normalized && performance.now() < deadline) results = await ZXingWASM.readBarcodes(normalized, dense);
             }
             if (results.some(isAcceptedBarcode)) { results = offsetBarcodePositions(results, rect); break; }
           }
@@ -587,8 +602,7 @@ self.onmessage = async ({ data }) => {
     }
     // White/angled/vertical labels retain the proven rotation and dense-crop
     // fallbacks. A coloured strip miss must never exclude other barcode types.
-    deadline = performance.now() + (data.budgetMs > 0 ? data.budgetMs : Infinity);
-    if (!results.some(isAcceptedBarcode) && focusTarget && Math.abs(data.regionOffset || 0) % 4 !== 3) {
+    if (!results.some(isAcceptedBarcode) && performance.now() < deadline && focusTarget && Math.abs(data.regionOffset || 0) % 4 !== 3) {
       // A short, blurred barcode benefits from new camera pixels. Avoid slow
       // dense whole-shelf retries while autofocus/camera zoom is settling.
       const px = Math.max(20, focusTarget.width * 0.2), py = Math.max(16, focusTarget.height);
@@ -604,7 +618,7 @@ self.onmessage = async ({ data }) => {
         if (results.some(isAcceptedBarcode)) results = offsetBarcodePositions(
           restoreRotatedPositions(results, crop, enlarged, angle, 2), rect);
       }
-    } else if (!results.some(isAcceptedBarcode) && data.focused) {
+    } else if (!results.some(isAcceptedBarcode) && performance.now() < deadline && data.focused) {
       // Read the whole visible crop first. Background text/stripes must not
       // consume every retry before the real barcode even reaches the reader.
       const quickOptions = { ...options, tryHarder: false, tryDownscale: false,
@@ -612,10 +626,8 @@ self.onmessage = async ({ data }) => {
       // The preceding strip search already tried sparse LocalAverage rows.
       // Only a different binarizer needs another whole-image sparse read.
       if (options.binarizer !== "LocalAverage") results = await ZXingWASM.readBarcodes(pixels, quickOptions);
-      if (!results.some(isAcceptedBarcode)) {
+      if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
         const located = findBarcodeRegions(pixels);
-        // Even a slower device gets a crop attempt after locating the label.
-        deadline = performance.now() + (data.budgetMs > 0 ? data.budgetMs : Infinity);
         if (located.hasContrast) {
           const regions = located.regions;
           const offset = regions.length ? Math.abs(data.regionOffset || 0) % regions.length : 0;
@@ -630,6 +642,7 @@ self.onmessage = async ({ data }) => {
           for (const rect of ordered) {
             if (performance.now() >= deadline) break;
             const crop = cropBarcodePixels(pixels, rect);
+            if (performance.now() >= deadline) break;
             results = await ZXingWASM.readBarcodes(crop, cropOptions);
             if (results.some(isAcceptedBarcode)) {
               results = offsetBarcodePositions(results, rect);
@@ -644,6 +657,7 @@ self.onmessage = async ({ data }) => {
             const angle = estimateBarcodeRotation(crop);
             if (!angle) continue;
             const rotated = rotateBarcodePixels(crop, angle);
+            if (performance.now() >= deadline) break;
             results = await ZXingWASM.readBarcodes(rotated, cropOptions);
             if (results.some(isAcceptedBarcode)) {
               results = offsetBarcodePositions(restoreRotatedPositions(results, crop, rotated, angle), rect);
@@ -670,12 +684,12 @@ self.onmessage = async ({ data }) => {
               }
             }
           }
-          if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+          if (!results.some(isAcceptedBarcode) && !triedScheduledAngle && performance.now() < deadline) {
             results = await decodeBarcodePixels(pixels, options, data, deadline);
           }
         }
       }
-    } else if (!results.some(isAcceptedBarcode)) {
+    } else if (!results.some(isAcceptedBarcode) && !triedScheduledAngle && performance.now() < deadline) {
       results = await decodeBarcodePixels(pixels, options, data, deadline);
     }
     const result = results.find(isAcceptedBarcode);

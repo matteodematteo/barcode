@@ -542,14 +542,14 @@ function bindDeferredEvents() {
 
   window.addEventListener("beforeunload", function () {
     closeCapturePage();
+    releaseCaptureHardware();
   });
 
   document.addEventListener("visibilitychange", function () {
-    if (!state.capturePageOpen) return;
     if (document.hidden) {
-      // Release hardware when backgrounded; only resume an open capture page.
+      // Release even the camera retained behind the product screen.
       releaseCaptureHardware();
-    } else if (captureEngineLoaded) {
+    } else if (state.capturePageOpen && captureEngineLoaded) {
       scheduleQuickPreviewResumeCheck();
     }
   });
