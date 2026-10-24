@@ -1113,13 +1113,15 @@ async function requestFocusRefresh(track, options = {}) {
     // Capability detection also covers iPhones if their browser exposes focus.
     // Otherwise native autofocus continues without sending camera constraints.
     const modes = track.getCapabilities().focusMode || [];
-    const mode = modes.includes("continuous") ? "continuous" :
+    let mode = options.manual && modes.includes("single-shot") ? "single-shot" :
+      modes.includes("continuous") ? "continuous" :
       modes.includes("single-shot") ? "single-shot" : "";
     if (!mode) return false;
     const settings = track.getSettings?.() || {};
     const now = Date.now();
-    // Update the metering point in continuous mode without switching modes
-    // away and back on a timer. Avoid restarting healthy autofocus on reopen.
+    // A tap actively triggers a sweep when supported, rather than waiting for
+    // continuous focus to notice a new target. Keep the result without a timed
+    // mode switch, and restore continuous focus on the next capture.
     const resetPoint = options.newScan && focus.point && (focus.point.x !== 0.5 || focus.point.y !== 0.5);
     const force = options.manual || options.force || resetPoint;
     if (!force && (mode === "continuous" && settings.focusMode === mode ||
@@ -1146,13 +1148,27 @@ async function requestFocusRefresh(track, options = {}) {
       try {
         applied = await applyCameraTrackConstraints(track, changes, session);
       } catch (error) {
-        if (!point || !isCurrentCameraTrack(track)) throw error;
-        // Some browsers recognize pointsOfInterest but the camera rejects it.
-        focus.pointRejected = true;
-        applied = await applyCameraTrackConstraints(track, { focusMode: mode }, session);
+        if (mode === "single-shot" && modes.includes("continuous") &&
+            error.constraint !== "pointsOfInterest" && isCurrentCameraTrack(track)) {
+          // Some devices advertise single-shot but reject the command.
+          mode = changes.focusMode = "continuous";
+          try { applied = await applyCameraTrackConstraints(track, changes, session); }
+          catch (fallbackError) { error = fallbackError; }
+        }
+        if (applied === undefined) {
+          if (!point || !isCurrentCameraTrack(track)) throw error;
+          // Some browsers recognize pointsOfInterest but the lens rejects it.
+          focus.pointRejected = true;
+          applied = await applyCameraTrackConstraints(track, { focusMode: mode }, session);
+        }
       }
       if (!applied) return false;
-      const actualMode = track.getSettings?.().focusMode;
+      let actualMode = track.getSettings?.().focusMode;
+      if (actualMode && actualMode !== mode && mode === "single-shot" && modes.includes("continuous")) {
+        mode = changes.focusMode = "continuous";
+        if (!await applyCameraTrackConstraints(track, focus.pointRejected ? { focusMode: mode } : changes, session)) return false;
+        actualMode = track.getSettings?.().focusMode;
+      }
       if (actualMode && actualMode !== mode) return false;
       focus.mode = mode;
       if (point && !focus.pointRejected) focus.point = point;
@@ -1180,7 +1196,7 @@ function scheduleFocusRefresh(track, options = {}) {
   requestFocusRefresh(track, options).then((result) => { ready = result; });
   // Retry only incomplete setup, such as capabilities becoming available
   // with the first frame. Never restart an already-running continuous focus.
-  for (const delay of [350, 1000]) {
+  for (const delay of [75, 150, 300, 600, 1000]) {
     const timerId = window.setTimeout(function () {
       if (!ready && isCurrentCameraTrack(track)) {
         requestFocusRefresh(track, options).then((result) => { ready = result; });

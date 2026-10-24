@@ -1,15 +1,15 @@
 // Offline app shell. All paths are resolved against the service worker scope
 // so installs work both at the domain root and from a deployed subfolder.
-const CACHE_NAME = 'webscanner-v152';
-const APP_VERSION = '152';
+const CACHE_NAME = 'webscanner-v153';
+const APP_VERSION = '153';
 const APP_SHELL_URL = new URL('index.html', self.registration.scope).toString();
 const CACHEABLE_DESTINATIONS = new Set(['script', 'style', 'document', 'image', 'font']);
 const ASSETS_TO_CACHE = [
-  './', 'index.html', 'manifest.webmanifest?v=152',
-  'apple-touch-icon.png?v=152', 'icon-192.png?v=152', 'icon-512.png?v=152',
-  'css/interface.bundle.css?v=152',
-  'js/app.bundle.js?v=152', 'js/capture.bundle.js?v=152',
-  'js/zxing-worker.js?v=152',
+  './', 'index.html', 'manifest.webmanifest?v=153',
+  'apple-touch-icon.png?v=153', 'icon-192.png?v=153', 'icon-512.png?v=153',
+  'css/interface.bundle.css?v=153',
+  'js/app.bundle.js?v=153', 'js/capture.bundle.js?v=153',
+  'js/zxing-worker.js?v=153',
   'js/vendor/zxing-wasm/3.1.5/reader.js',
   'js/vendor/zxing-wasm/3.1.5/zxing_reader.wasm'
 ].map((url) => new URL(url, self.registration.scope).toString());
@@ -71,9 +71,9 @@ self.addEventListener('fetch', (event) => {
     })());
     return;
   }
-  // Reopen instantly from the installed shell, refreshing HTML in the
-  // background. A slow connection must not hold up an already installed app.
-  if (event.request.mode === 'navigate') {
+  // Prefer fresh HTML on every visit (including explicit version checks).
+  // A bounded wait and the installed shell keep slow/offline visits usable.
+  if (event.request.mode === 'navigate' || requestUrl.pathname === new URL(APP_SHELL_URL).pathname) {
     const cachePromise = caches.open(CACHE_NAME);
     const cachedPromise = cachePromise.then(async (cache) =>
       await cache.match(event.request) || await cache.match(APP_SHELL_URL));
@@ -85,10 +85,22 @@ self.addEventListener('fetch', (event) => {
           cache.put(APP_SHELL_URL, response.clone())
         ]).catch(() => {});
       }
-      return response;
+      return response?.ok ? response : await cachedPromise || response;
     }).catch(async () => await cachedPromise || Response.error());
     event.waitUntil(networkFetch.then(() => {}));
-    event.respondWith(cachedPromise.then((cached) => cached || networkFetch));
+    event.respondWith((async () => {
+      const cached = await cachedPromise;
+      if (!cached) return networkFetch;
+      let timeout;
+      try {
+        return await Promise.race([
+          networkFetch,
+          new Promise((resolve) => { timeout = setTimeout(() => resolve(cached), 2000); })
+        ]);
+      } finally {
+        clearTimeout(timeout);
+      }
+    })());
     return;
   }
 

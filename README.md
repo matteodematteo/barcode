@@ -58,9 +58,11 @@ on Capture also warms the decoder without opening hardware.
 The camera requests continuous autofocus when available and configures the lens
 as soon as playback starts, without waiting for the decoder. Tap or click the
 preview to select a focus point; a yellow target marks the selected location.
-Taps keep continuous autofocus aimed at the selected point for the rest of that
-capture, without a delayed switch to another focus mode. Cameras that only offer
-single-shot focus still use it. Automatic barcode assistance does not change
+Taps trigger a single autofocus sweep at the selected point where supported,
+without a delayed switch to another focus mode. Other cameras keep continuous
+focus aimed at the point. The next capture restores continuous autofocus.
+If lens capabilities arrive after playback, setup retries after 75 ms rather
+than waiting 350 ms for the first retry. Automatic barcode assistance does not change
 hardware zoom or override a selected point. The app maps
 the selected point through the preview crop and preserves resolution and torch
 settings. The hint reports when point focus is unavailable on a browser or lens.
@@ -72,8 +74,15 @@ captures while the app remains visible. Saved
 authentication refreshes in the background on startup, when the app reopens,
 and after reconnecting. Product requests share an in-flight refresh; startup and
 capture stay usable while login completes. The service worker
-registers after initial paint, caches capture assets for offline use, and serves
-installed navigation immediately while refreshing HTML in the background.
+registers after the page loads, independently of the application bundle, and
+caches capture assets for offline use. Online navigation requests fresh HTML
+without using the HTTP cache; after a two-second network wait, an installed
+copy provides a fallback for slow connections. Offline startup uses that copy.
+Update checks also run when returning to the app, reconnecting, and once per
+minute while visible. New releases reload automatically when capture, dialogs,
+typing and requests are idle. The Reload notice remains available while busy.
+Input drafts survive an update; cookies, saved login, capture lists and recent
+print requests are retained. No manual clearing of browser data is needed.
 
 The vendored reader and WASM are pinned together to **ZXing WASM 3.1.5**. Their
 npm tarball integrity was verified during import. See the vendor README for the
@@ -204,13 +213,13 @@ camera permission API; these checks do not replace physical phone testing.
 The layout check covers one-line capture statuses from 280px through landscape
 widths, stable camera geometry including retry, and bounded history rendering.
 
-To check the update notice and Reload flow (starts its own local server):
+To check automatic updates and offline fallback (starts its own local server):
 
 ```powershell
-python tests/test_updates.py
-python tests/test_history_controls.py
+node tests/test_updates.cjs
 ```
 
-This installs a previous release, serves the current release under the same
-subfolder, and verifies that Reload appears. It checks new CSS/JS loading,
-preserved input drafts and saved data, and offline decoder initialization.
+This installs a previous cached release, serves newer releases under the same
+subfolder with long HTTP cache lifetimes, and verifies automatic reload after
+editing or capture ends. It checks retained cookies, credentials, input drafts
+and capture history, server-error fallback, and offline camera/decoder startup.
