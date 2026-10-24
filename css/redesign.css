@@ -133,56 +133,60 @@ body.is-capturing { overflow: hidden; }
 
 .brand-icon img { display: block; width: 100%; height: 100%; object-fit: contain; border-radius: inherit; }
 
-/* Keep capture controls within thumb reach without hiding the last record. */
-.app-shell { padding-bottom: calc(170px + env(safe-area-inset-bottom)); }
+/* Capture controls share one full-width row below the list actions. */
 .capture-actions {
-  position: fixed;
-  z-index: 15;
-  right: max(16px, env(safe-area-inset-right));
-  bottom: max(18px, env(safe-area-inset-bottom));
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px;
+  margin-bottom: 8px;
 }
 .capture-actions #scanBtn {
-  width: auto;
-  height: 52px;
-  padding: 0 18px;
-  border-radius: 18px;
-  box-shadow: 0 5px 20px #123b2933;
+  grid-column: auto;
+  width: 100%;
+  min-width: 0;
+  height: calc(var(--history-action-height, 36px) * 1.3);
+  min-height: calc(var(--history-action-height, 36px) * 1.3);
+  padding: 0 8px;
+  border-radius: 10px;
+  font-size: clamp(11px, 3.1vw, 14px);
+  white-space: nowrap;
 }
 .capture-actions #entryModeBtn {
-  display: grid;
-  place-items: center;
-  width: 52px;
-  min-width: 52px;
-  height: 52px;
+  width: auto;
+  min-width: 0;
+  height: calc(var(--history-action-height, 36px) * 1.3);
+  min-height: calc(var(--history-action-height, 36px) * 1.3);
+  padding: 0 10px;
   border: 1px solid var(--panel-line);
-  border-radius: 18px;
-  box-shadow: 0 4px 16px #123b2926;
+  border-radius: 10px;
+  font-size: clamp(11px, 3.1vw, 14px);
+  white-space: nowrap;
 }
 .capture-actions #entryModeBtn.btn-muted { background: #fff; }
-.capture-actions #entryModeIcon { width: 23px; height: 23px; }
-body.is-capturing .capture-actions { visibility: hidden; }
+@media (max-width: 340px) {
+  .capture-actions #scanBtn::before { display: none; }
+}
 
 body.is-entering-quantity { overflow: hidden; }
 #quantityPadCard {
   z-index: 60;
-  padding: max(12px, env(safe-area-inset-top)) 16px max(12px, env(safe-area-inset-bottom));
+  align-items: flex-end;
+  justify-content: stretch;
+  padding: 0;
   background: #06120c88;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 #quantityPadCard .quantity-capture-card {
-  width: min(100%, 350px);
-  max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  width: 100%;
+  max-height: calc(100dvh - env(safe-area-inset-top));
   overflow-y: auto;
   background: var(--panel);
   color: var(--text);
-  border: 1px solid var(--panel-line);
-  border-radius: 20px;
-  padding: 16px;
+  border: 0;
+  border-top: 1px solid var(--panel-line);
+  border-radius: 20px 20px 0 0;
+  padding: 16px max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   box-shadow: 0 18px 60px #0005;
 }
 .quantity-capture-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
@@ -196,7 +200,7 @@ body.is-entering-quantity { overflow: hidden; }
 #quantityStatus:empty { display: none; }
 body.is-entering-quantity .focus-hint { visibility: hidden; }
 @media (max-height: 480px) {
-  #quantityPadCard .quantity-capture-card { padding: 12px; }
+  #quantityPadCard .quantity-capture-card { padding: 12px max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
   .quantity-capture-heading .btn { min-height: 30px; }
   #quantityBarcode { margin: 4px 0; font-size: 12px; }
   #quantityInput { height: 36px; margin-bottom: 8px; font-size: 24px; }

@@ -5,8 +5,10 @@ to open the dedicated capture screen. In classic mode, a barcode confirmed on
 two fresh frames returns to the main screen immediately. In quantity mode,
 confirmation opens a quantity keypad over the live preview; Enter / Add saves
 the selected quantity and returns immediately. Product lookup continues on the
-main screen. The lock/unlock mode switch floats at the bottom right, below
-Capture. Product details and sales tabs remain available in both modes.
+main screen. Below the Delete/Clear list row, a compact mode button shows
+"mode: Classic" or "mode: Quantity" on the left and Capture fills the remaining
+width on the right. Both controls are 30% taller than Delete. Product details and
+sales tabs remain available in both modes.
 After capture, decoding pauses and the camera stays active behind the main
 screen for the next Capture tap. Back, Escape, leaving the page, and
 backgrounding the app release the camera. Returning to the main screen after
@@ -107,8 +109,8 @@ Last 30 days remains the initial date range. Clean clears both dates before Appl
 
 Capture-list actions use compact Delete, Clear list, and Print buttons, followed
 by a green **+ More** control. Its active switch is pale yellow (RGB 255, 244, 202).
-The quantity keypad appears only as a popup after capture or typed-barcode
-confirmation. Its three columns are 1–3, 4–6, 7–9, then C, 0, and icon-only delete.
+The quantity keypad appears as a full-width bottom sheet after capture or
+typed-barcode confirmation. Its three columns are 1–3, 4–6, 7–9, then C, 0, and icon-only delete.
 A taller Enter / Add button spans the final row. Quantity starts at 1; the first
 digit replaces it. Cancel, Escape, or camera Back discards the pending capture.
 There is no quantity box or permanent keypad on the main screen.
@@ -140,7 +142,7 @@ reuse, and cancellation. Physical autofocus still requires testing on a phone.
 
 Run `node tests/test_capture_flow.cjs` for the quantity popup, overlapping lookups,
 classic capture, cancellation, cleared-list snapshots and storage failures,
-floating controls, and editor keyboard/discount/quantity behavior. It uses a
+capture controls, and editor keyboard/discount/quantity behavior. It uses a
 local server, fake camera, and lookup stubs without contacting live services.
 
 With the local server running, install the optional test dependency and run:

@@ -4,16 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f5f6f2" />
-  <meta name="webscanner-version" content="151" />
+  <meta name="webscanner-version" content="152" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Web Scanner" />
-  <link rel="manifest" href="manifest.webmanifest?v=151" />
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=151" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=151" />
+  <link rel="manifest" href="manifest.webmanifest?v=152" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=152" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=152" />
   <title>Web Barcode Scanner</title>
-  <link rel="preload" href="js/app.bundle.js?v=151" as="script" />
-  <link rel="preload" href="css/interface.bundle.css?v=151" as="style" />
+  <link rel="preload" href="js/app.bundle.js?v=152" as="script" />
+  <link rel="preload" href="css/interface.bundle.css?v=152" as="style" />
   <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
        round-trips for the above-the-fold shell (base + scanner + layout +
        essential components). The remaining interface styles load as one small sheet below. -->
@@ -344,13 +344,13 @@
   <!-- These sheets affect the visible page geometry. Keep them render-blocking so
        browsers paint the completed interface once instead of restyling sections
        progressively on a slow connection. -->
-  <link rel="stylesheet" href="css/interface.bundle.css?v=151" />
+  <link rel="stylesheet" href="css/interface.bundle.css?v=152" />
 </head>
 <body>
   <main class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=151" width="34" height="34" alt="" decoding="async" /></span>
+        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=152" width="34" height="34" alt="" decoding="async" /></span>
         <div><h1>Web Scanner</h1></div>
       </div>
       <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
@@ -473,20 +473,16 @@
         <button class="btn btn-primary" id="printBtn" type="button">Print</button>
         <div class="history-details-control"><label class="history-details-label" for="historyDetailsSwitch">+ More</label><button class="btn btn-muted history-details-switch" id="historyDetailsSwitch" type="button" role="switch" aria-checked="false" aria-label="Show cost and supplier in history" title="Show cost and supplier in history"><span class="history-details-switch-track" aria-hidden="true"><span class="history-details-switch-thumb"></span></span></button></div>
       </div>
+      <nav class="capture-actions" aria-label="Capture controls">
+        <button class="btn btn-muted" id="entryModeBtn" type="button" aria-label="mode: Classic" title="Switch to Quantity mode" aria-pressed="false"><span id="entryModeLabel">mode: Classic</span></button>
+        <button class="btn btn-primary" id="scanBtn" type="button" data-mode="start">Capture barcode</button>
+      </nav>
       <div class="history-list" id="historyList" aria-live="polite">
         <p class="history-empty" id="historyEmpty">No scans yet.</p>
       </div>
     </section>
 
-    <nav class="capture-actions" aria-label="Capture controls">
-      <button class="btn btn-primary" id="scanBtn" type="button" data-mode="start">Capture barcode</button>
-      <button class="btn btn-muted manual-entry-lock" id="entryModeBtn" type="button" aria-label="Locked barcode entry" title="Locked barcode entry">
-            <svg id="entryModeIcon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="5" y="11" width="14" height="10" rx="2"></rect>
-              <path d="M8 11V8a4 4 0 1 1 8 0v3"></path>
-            </svg>
-          </button>
-    </nav>
+
   </main>
 
   <section id="capturePage" class="capture-page" role="dialog" aria-modal="true" aria-labelledby="captureTitle" hidden>
@@ -755,6 +751,6 @@
     <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
   </div>
   <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
-  <script src="js/app.bundle.js?v=151" defer></script>
+  <script src="js/app.bundle.js?v=152" defer></script>
 </body>
 </html>

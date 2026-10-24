@@ -24,14 +24,14 @@ function updateQuantityPadAvailability() {
 }
 
 function updateEntryModeControls() {
-  if (!state.els?.entryModeBtn || !state.els?.entryModeIcon) {
+  if (!state.els?.entryModeBtn || !state.els?.entryModeLabel) {
     return;
   }
 
   const unlocked = Boolean(state.isQuantityEntryUnlocked);
-  const label = unlocked ? "Quantity capture mode · switch to classic" : "Classic capture mode · switch to quantity";
+  const label = unlocked ? "mode: Quantity" : "mode: Classic";
   state.els.entryModeBtn.setAttribute("aria-label", label);
-  state.els.entryModeBtn.title = label;
+  state.els.entryModeBtn.title = unlocked ? "Switch to Classic mode" : "Switch to Quantity mode";
   state.els.entryModeBtn.setAttribute("aria-pressed", String(unlocked));
   state.els.entryModeBtn.classList.toggle("btn-primary", unlocked);
   state.els.entryModeBtn.classList.toggle("btn-muted", !unlocked);
@@ -40,9 +40,7 @@ function updateEntryModeControls() {
     state.els.productInfoSection.hidden = false;
   }
   if (typeof syncSalesPerformanceRequests === "function") syncSalesPerformanceRequests();
-  state.els.entryModeIcon.innerHTML = unlocked
-    ? '<path d="M16 11V8a4 4 0 0 0-7.74-1.5"></path><rect x="5" y="11" width="14" height="10" rx="2"></rect>'
-    : '<rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 1 1 8 0v3"></path>';
+  state.els.entryModeLabel.textContent = label;
 }
 
 

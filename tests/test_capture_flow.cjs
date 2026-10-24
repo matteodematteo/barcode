@@ -55,10 +55,16 @@ async function main() {
     assert.equal(await page.locator('#productInfoSection').isVisible(), true);
     const captureBox = await page.locator('#scanBtn').boundingBox();
     const modeBox = await page.locator('#entryModeBtn').boundingBox();
-    assert.ok(captureBox.y + captureBox.height < modeBox.y);
-    assert.ok(modeBox.x > 300 && modeBox.y > 740);
+    const deleteBox = await page.locator('#clearSelectedBtn').boundingBox();
+    assert.ok(modeBox.x + modeBox.width < captureBox.x);
+    assert.ok(Math.abs(modeBox.y - captureBox.y) < 1);
+    assert.ok(modeBox.y >= deleteBox.y + deleteBox.height);
+    assert.ok(Math.abs(modeBox.height - deleteBox.height * 1.3) < 1);
+    assert.ok(Math.abs(captureBox.height - deleteBox.height * 1.3) < 1);
+    assert.equal(await page.locator('#entryModeBtn').innerText(), 'mode: Classic');
     await page.locator('#entryModeBtn').click();
     assert.equal(await page.evaluate(() => state.isQuantityEntryUnlocked), true);
+    assert.equal(await page.locator('#entryModeBtn').innerText(), 'mode: Quantity');
     assert.equal(await page.locator('#productInfoSection').isVisible(), true);
     assert.equal(await page.locator('#quantityPadCard').isVisible(), false);
     const screenshotDir = path.join(os.tmpdir(), 'webscanner-flow-qa');
@@ -82,8 +88,8 @@ async function main() {
     for (const viewport of [{ width: 280, height: 653 }, { width: 844, height: 390 }]) {
       await page.setViewportSize(viewport);
       const box = await page.locator('.quantity-capture-card').boundingBox();
-      assert.ok(box.x >= 0 && box.x + box.width <= viewport.width + 1);
-      assert.ok(box.y >= 0 && box.y + box.height <= viewport.height + 1);
+      assert.ok(Math.abs(box.x) < 1 && Math.abs(box.width - viewport.width) < 1, 'quantity sheet fills the screen width');
+      assert.ok(Math.abs(box.y + box.height - viewport.height) < 1, 'quantity sheet rests on the bottom edge');
       const enter = await page.locator('#quantityPad [data-key="enter"]').boundingBox();
       assert.ok(enter.y + enter.height <= viewport.height, 'quantity Enter remains visible in landscape');
       await page.screenshot({ path: path.join(screenshotDir, `quantity-${viewport.width}.png`) });
@@ -242,7 +248,7 @@ async function main() {
     assert.equal(await page.locator('#historyEditItalianNameInput').inputValue(), 'My edited name');
     await page.locator('#historyEditBackBtn').click();
     assert.deepEqual(errors, []);
-    console.log('PASS: quantity popup over camera, immediate return, overlapping lookups, typed/classic capture, cancellation, floating controls, preserved product info');
+    console.log('PASS: full-width quantity bottom sheet, immediate return, overlapping lookups, typed/classic capture, cancellation, inline mode/capture controls, preserved product info');
     console.log('PASS: confirmed-clear snapshots, cancellation/storage-failure protection, persistence, saved-list viewing and stubbed reprinting');
     console.log('PASS: editor field order, Enter/Tab focus, read-only barcode, discount-price synchronization, quantity saving and late-refresh edit protection');
     console.log(`Screenshots: ${screenshotDir}`);

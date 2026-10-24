@@ -30,7 +30,7 @@ function queryCriticalElements() {
     printBtn:           document.getElementById("printBtn"),
     entryModeBtn:       document.getElementById("entryModeBtn"),
     historyDetailsSwitch: document.getElementById("historyDetailsSwitch"),
-    entryModeIcon:      document.getElementById("entryModeIcon"),
+    entryModeLabel:     document.getElementById("entryModeLabel"),
     quantityInput:      document.getElementById("quantityInput"),
     quantityPad:        document.getElementById("quantityPad"),
     quantityPadCard:    document.getElementById("quantityPadCard"),
