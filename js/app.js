@@ -5,6 +5,7 @@
 async function init() {
   state.els = queryElements();
   requireElements(state.els);
+  captureDiagnostics.init();
   setHistoryDetailsVisible(false);
   state.isIOS = isIOSDevice();
   state.isMobileUi = detectMobileUi();

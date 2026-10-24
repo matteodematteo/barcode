@@ -95,6 +95,7 @@ function isAnyDialogOpen() {
 
 
 function openSettingsDialog() {
+  captureDiagnostics.status();
   fillSettingsForm(readSavedSettings());
   state.els.settingsSaveNote.textContent = "";
   state.els.settingsDialog.classList.add("is-open");

@@ -70,6 +70,7 @@ function getDeferredElements() {
   _deferredEls = {
     // Dialogs
     settingsDialog:              document.getElementById("settingsDialog"),
+    downloadDiagnosticsBtn:       document.getElementById("downloadDiagnosticsBtn"),
     confirmDialog:               document.getElementById("confirmDialog"),
     confirmDialogCancelBtn:      document.getElementById("confirmDialogCancelBtn"),
     confirmDialogOkBtn:          document.getElementById("confirmDialogOkBtn"),

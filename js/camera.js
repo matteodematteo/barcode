@@ -486,6 +486,8 @@ async function handleDetectedCode(detectedText) {
     return;
   }
 
+  captureDiagnostics.mark("barcode.confirmed");
+
   if (state.els.barcodeInput.value !== code) {
     state.els.barcodeInput.value = code;
   }
@@ -674,30 +676,48 @@ function updateBarcodeTracking(region, frame, session) {
 }
 
 
-async function detectBarcodeInFrame() {
+async function detectBarcodeInFrame(frameTiming = {}) {
+  const diagnostic = captureDiagnostics.current;
+  const started = performance.now();
   const session = state.scanSession;
   const detector = await createDetector();
   const attempt = state.detectionAttempt || 0;
   // Keep the successful crop for confirmation on the next fresh camera frame.
   const confirming = Boolean(state.pendingConfirmCode && state.lastDetectionPass);
   const pass = confirming ? state.lastDetectionPass : makeDetectionPass(attempt);
+  const drawStarted = performance.now();
   const canvas = drawDetectionFrame(pass.mode);
   const frameGeometry = state.captureFrameGeometry;
   const context = state.captureContext || canvas.getContext("2d", { willReadFrequently: true });
+  const readStarted = performance.now();
   const image = context.getImageData(0, 0, canvas.width, canvas.height);
-  const text = await detector.detect(image,
+  const diagnosticsStarted = performance.now();
+  let quality = null, videoState = null;
+  try {
+    quality = captureDiagnostics.sampleImage(image, diagnostic);
+    videoState = captureDiagnostics.frameState(state.els.cameraPreview, diagnostic);
+  } catch (error) { captureDiagnostics.error("diagnostics.imageSample", error, diagnostic); }
+  const diagnosticsMs = performance.now() - diagnosticsStarted;
+  const decodeStarted = performance.now();
+  let worker = null, text = "";
+  try {
+    text = await detector.detect(image,
     CONFIG.detectorFormats.map((format) => ZXING_FORMAT_MAP[format]).filter(Boolean),
     { thorough: pass.thorough, enhance: pass.enhance, orientation: pass.orientation,
       downscale: pass.mode === "visible", minLineCount: 2,
       focused: pass.focused, budgetMs: confirming ? 240 : pass.budgetMs, binarizer: pass.binarizer,
       regionOffset: pass.regionOffset,
+      onDiagnostics: (details) => { worker = details; },
       preferredRegion: confirming && state.lastBarcodeRegion ? {
         x: (state.lastBarcodeRegion.x - frameGeometry.sx) * frameGeometry.outputWidth / frameGeometry.sw,
         y: (state.lastBarcodeRegion.y - frameGeometry.sy) * frameGeometry.outputHeight / frameGeometry.sh,
         width: state.lastBarcodeRegion.width * frameGeometry.outputWidth / frameGeometry.sw,
         height: state.lastBarcodeRegion.height * frameGeometry.outputHeight / frameGeometry.sh
       } : null,
-      onFocus: (region) => { assistSmallBarcode(region, frameGeometry, session); },
+      onFocus: (region) => {
+        captureDiagnostics.event("barcode.candidateRegion", { region }, diagnostic);
+        assistSmallBarcode(region, frameGeometry, session);
+      },
       onRegion: (region) => {
         if (session !== state.scanSession) return;
         state.lastBarcodeRegion = {
@@ -708,6 +728,12 @@ async function detectBarcodeInFrame() {
         };
         updateBarcodeTracking(region, frameGeometry, session);
       } });
+  } finally {
+    captureDiagnostics.frame({ ...frameTiming, attempt, pass: { ...pass, confirming },
+      drawMs: readStarted - drawStarted, readbackMs: diagnosticsStarted - readStarted,
+      decodeMs: performance.now() - decodeStarted, totalMs: performance.now() - started + (frameTiming.waitMs || 0),
+      diagnosticsMs, geometry: frameGeometry, decoded: Boolean(text), worker, quality, videoState }, diagnostic);
+  }
   if (session === state.scanSession) {
     state.detectionAttempt = attempt + 1;
     state.lastDetectionPass = text ? pass : null;
@@ -856,6 +882,7 @@ function confirmAcrossFrames(detectedText) {
   if (state.pendingConfirmCode === code) {
     state.pendingConfirmCount += 1;
   } else {
+    if (state.pendingConfirmCode) captureDiagnostics.event("barcode.confirmationChanged");
     state.pendingConfirmCode = code;
     state.pendingConfirmCount = 1;
   }
@@ -880,6 +907,7 @@ async function captureAttempt(session) {
 
   // Decoding may take longer than a camera frame. Use an already advanced
   // frame immediately, but never confirm twice from the same frozen frame.
+  const waitStarted = performance.now();
   const available = readVideoFrameSample(video);
   const comparableCounters = available.decodedFrames !== null &&
     (!state.lastScanFrame || state.lastScanFrame.decodedFrames !== null);
@@ -887,16 +915,22 @@ async function captureAttempt(session) {
   const frame = canUseAvailable && hasVideoFrameAdvanced(available, state.lastScanFrame)
     ? available : await waitForFreshVideoFrame(video);
   if (session !== state.scanSession || !state.isScanning || document.hidden) return false;
-  if (!hasVideoFrameAdvanced(frame, state.lastScanFrame)) return false;
+  if (!hasVideoFrameAdvanced(frame, state.lastScanFrame)) {
+    captureDiagnostics.metric("staleFrameWaitMs", performance.now() - waitStarted);
+    return false;
+  }
   state.lastScanFrame = frame;
-  const detectedText = await detectBarcodeInFrame();
+  if (!state.detectionAttempt) captureDiagnostics.mark("camera.firstScanFrame");
+  const detectedText = await detectBarcodeInFrame({ waitMs: performance.now() - waitStarted, frame });
   if (session !== state.scanSession || !state.isScanning || document.hidden) return false;
 
   if (!detectedText) {
+    captureDiagnostics.metric("missedFrames", 1);
+    if (state.pendingConfirmCode) captureDiagnostics.event("barcode.confirmationMiss");
     confirmAcrossFrames("");
     // Single-shot-only cameras otherwise retain focus at the previous distance.
     const focus = cameraFocusStates.get(state.track);
-    if (focus?.mode === "single-shot" && Date.now() - focus.updatedAt >= 2000) {
+    if (focus?.mode === "single-shot" && !focus.manualPoint && Date.now() - focus.updatedAt >= 2000) {
       requestFocusRefresh(state.track, { force: true }).catch(() => {});
     }
     // Keep scanning fresh 1080p frames with the next crop/detail pass.
@@ -904,6 +938,7 @@ async function captureAttempt(session) {
     return false;
   }
 
+  captureDiagnostics.candidate(detectedText);
   if (!confirmAcrossFrames(detectedText)) {
     setStatus("Confirming code…");
     return false;
@@ -947,6 +982,7 @@ async function runScanLoop() {
       await captureAttempt(session);
     } catch (error) {
       if (session === state.scanSession) {
+        captureDiagnostics.error("scan.loop", error);
         closeCapturePage();
         setStatus(error.message || "Scanner failed. Tap Capture to retry.", "Scanner unavailable");
       }
@@ -1021,11 +1057,18 @@ function isCurrentCameraTrack(track) {
 
 
 function applyCameraTrackConstraints(track, changes, session) {
+  const diagnostic = captureDiagnostics.current;
+  const queuedAt = performance.now();
+  captureDiagnostics.event("camera.controlQueued", { changes }, diagnostic);
   // applyConstraints replaces the previous constraints. Keep the current
   // resolution, frame rate and torch, and serialize focus/torch changes.
   const previous = cameraConstraintQueues.get(track) || Promise.resolve();
   const pending = previous.catch(() => {}).then(async function () {
-    if (!isCurrentCameraTrack(track) || session !== undefined && session !== state.scanSession) return false;
+    if (!isCurrentCameraTrack(track) || session !== undefined && session !== state.scanSession) {
+      captureDiagnostics.event("camera.controlCancelled", {}, diagnostic); return false;
+    }
+    const applyStarted = performance.now();
+    const queueMs = applyStarted - queuedAt;
     // Some browsers report only image-capture controls from getConstraints()
     // after focus/torch changes. Retain our full request so these operations
     // cannot silently reset the video resolution or frame rate.
@@ -1039,7 +1082,15 @@ function applyCameraTrackConstraints(track, changes, session) {
       return kept;
     }).filter((entry) => Object.keys(entry).length);
     next.advanced = [...advanced, changes];
-    await track.applyConstraints(next);
+    try { await track.applyConstraints(next); }
+    catch (error) { captureDiagnostics.error("camera.applyConstraints", error, diagnostic); throw error; }
+    const applyMs = performance.now() - applyStarted;
+    captureDiagnostics.metric("cameraControlQueueMs", queueMs, diagnostic);
+    captureDiagnostics.metric("cameraControlApplyMs", applyMs, diagnostic);
+    let actual = {};
+    try { actual = track.getSettings?.() || {}; } catch (_) {}
+    captureDiagnostics.event("camera.controlApplied", { queueMs, applyMs, changes,
+      actual: { focusMode: actual.focusMode, focusDistance: actual.focusDistance, width: actual.width, height: actual.height, torch: actual.torch } }, diagnostic);
     if (!isCurrentCameraTrack(track)) return false;
     cameraTrackConstraints.set(track, next);
     return true;
@@ -1086,6 +1137,10 @@ function assistSmallBarcode(region, frame, session) {
 
 
 async function requestFocusRefresh(track, options = {}) {
+  const diagnostic = captureDiagnostics.current;
+  const focusStarted = performance.now();
+  captureDiagnostics.event("focus.request", { manual: Boolean(options.manual), point: options.point,
+    newScan: Boolean(options.newScan), forced: Boolean(options.force) }, diagnostic);
   if (!state.capturePageOpen || !isCurrentCameraTrack(track) || !track.getCapabilities || !track.applyConstraints) return false;
   let focus = cameraFocusStates.get(track);
   if (!focus) {
@@ -1099,7 +1154,9 @@ async function requestFocusRefresh(track, options = {}) {
     // A user's selected target remains authoritative for this capture. Do not
     // let decoder candidates change it again a few seconds after the tap.
     focus.manualPoint = true;
-  } else if (focus.manualPoint) return false;
+  } else if (focus.manualPoint) {
+    captureDiagnostics.event("focus.skipped", { reason: "user-selected-point" }, diagnostic); return false;
+  }
   // A tap must wait for startup/torch work, rather than being discarded.
   // When several taps arrive, only the latest waiting target is applied.
   while (focus.pending) {
@@ -1116,7 +1173,7 @@ async function requestFocusRefresh(track, options = {}) {
     let mode = options.manual && modes.includes("single-shot") ? "single-shot" :
       modes.includes("continuous") ? "continuous" :
       modes.includes("single-shot") ? "single-shot" : "";
-    if (!mode) return false;
+    if (!mode) { captureDiagnostics.event("focus.unavailable", {}, diagnostic); return false; }
     const settings = track.getSettings?.() || {};
     const now = Date.now();
     // A tap actively triggers a sweep when supported, rather than waiting for
@@ -1125,7 +1182,9 @@ async function requestFocusRefresh(track, options = {}) {
     const resetPoint = options.newScan && focus.point && (focus.point.x !== 0.5 || focus.point.y !== 0.5);
     const force = options.manual || options.force || resetPoint;
     if (!force && (mode === "continuous" && settings.focusMode === mode ||
-        focus.mode === mode && (!settings.focusMode || settings.focusMode === mode))) return true;
+        focus.mode === mode && (!settings.focusMode || settings.focusMode === mode))) {
+      captureDiagnostics.event("focus.alreadyRunning", { mode }, diagnostic); return true;
+    }
     if (force && !options.manual && !resetPoint && now - focus.lastForcedAt < 700) return false;
     if (force) focus.lastForcedAt = now;
 
@@ -1159,6 +1218,7 @@ async function requestFocusRefresh(track, options = {}) {
           if (!point || !isCurrentCameraTrack(track)) throw error;
           // Some browsers recognize pointsOfInterest but the lens rejects it.
           focus.pointRejected = true;
+          captureDiagnostics.event("focus.pointRejected", {}, diagnostic);
           applied = await applyCameraTrackConstraints(track, { focusMode: mode }, session);
         }
       }
@@ -1173,15 +1233,19 @@ async function requestFocusRefresh(track, options = {}) {
       focus.mode = mode;
       if (point && !focus.pointRejected) focus.point = point;
       focus.updatedAt = Date.now();
+      captureDiagnostics.camera(track, diagnostic);
+      captureDiagnostics.mark("focus.commandComplete", { mode, pointRequested: Boolean(point),
+        pointRejected: focus.pointRejected, requestMs: performance.now() - focusStarted }, diagnostic);
       if (options.manual && manualRequest === focus.manualRequest) {
         // The API acknowledges a request; it does not report lens convergence.
         setPreviewFocusFeedback(point && !focus.pointRejected ? "Focus requested" : "Autofocus refreshed · point focus unavailable");
       }
       return true;
-    }()).catch(() => false);
+    }()).catch((error) => { captureDiagnostics.error("focus.apply", error, diagnostic); return false; });
     return await focus.pending;
-  } catch {
+  } catch (error) {
     // Focus controls are optional; a failure must never stop the live preview.
+    captureDiagnostics.error("focus.setup", error, diagnostic);
     return false;
   } finally {
     focus.pending = null;
@@ -1423,13 +1487,18 @@ async function startScanning() {
   const generation = state.captureGeneration;
   state.captureContext ||= state.els.captureCanvas.getContext("2d", { alpha: false, willReadFrequently: true });
   // Attach the rejection handler immediately while camera permission is pending.
-  const detectorReady = createDetector().then(() => null, (error) => error);
+  const diagnostic = captureDiagnostics.current;
+  captureDiagnostics.mark("decoder.request", {}, diagnostic);
+  const detectorReady = createDetector().then(() => {
+    captureDiagnostics.mark("decoder.ready", {}, diagnostic); return null;
+  }, (error) => { captureDiagnostics.error("decoder.init", error, diagnostic); return error; });
   // Camera preview works fully offline (getUserMedia needs no network).
   if (!state.isCameraRunning) {
     await startCamera(state.activeDeviceId);
   } else {
     // Offscreen video may have been paused by the browser between captures.
     await state.els.cameraPreview.play();
+    captureDiagnostics.mark("camera.playing", { reused: true }, diagnostic);
     startPreviewWatchdog();
   }
 
@@ -1458,6 +1527,8 @@ async function startScanning() {
   state.lastDetectedBarcode = "";
   state.lastDetectedAt = 0;
   state.isScanning = true;
+  captureDiagnostics.mark("scanning.started", {}, diagnostic);
+  captureDiagnostics.camera(state.track, diagnostic);
   updateScanButton();
   updateModePill();
   setStatus("Scanning barcode…");

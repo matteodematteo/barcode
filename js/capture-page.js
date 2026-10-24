@@ -12,6 +12,8 @@ function warmCaptureEngine() {
 
 function requestCaptureStream(deviceId) {
   const request = { generation: state.captureGeneration, stream: null, playback: null, promise: null };
+  const diagnostic = captureDiagnostics.current;
+  captureDiagnostics.mark("camera.request", { savedCamera: Boolean(deviceId) }, diagnostic);
   state.captureRequest = request;
   const video = { ...CONFIG.cameraStartupVideo };
   if (navigator.mediaDevices?.getSupportedConstraints?.().focusMode) {
@@ -24,6 +26,8 @@ function requestCaptureStream(deviceId) {
     video.deviceId = { exact: deviceId };
   }
   request.videoConstraints = video;
+  captureDiagnostics.event("camera.requestConstraints", { constraints: { ...CONFIG.cameraStartupVideo,
+    focusMode: video.focusMode, facingMode: video.facingMode } }, diagnostic);
   // Request permission synchronously in the original click, including on iOS.
   let camera;
   try {
@@ -37,6 +41,7 @@ function requestCaptureStream(deviceId) {
   request.promise = camera.catch(function (error) {
     if (!state.capturePageOpen || request.generation !== state.captureGeneration || document.hidden) throw error;
     if (!["OverconstrainedError", "NotFoundError"].includes(error.name)) throw error;
+    captureDiagnostics.error("camera.requestRetry", error, diagnostic);
     // Retry an unavailable saved camera without changing the requested quality.
     request.videoConstraints = { ...CONFIG.cameraStartupVideo };
     return navigator.mediaDevices.getUserMedia({ audio: false, video: request.videoConstraints });
@@ -46,14 +51,18 @@ function requestCaptureStream(deviceId) {
       return { error: new DOMException("Capture closed", "AbortError") };
     }
     request.stream = stream;
+    captureDiagnostics.mark("camera.streamReady", {}, diagnostic);
+    captureDiagnostics.camera(stream.getVideoTracks()[0], diagnostic);
     const preview = state.els.cameraPreview;
     preview.muted = true;
     preview.playsInline = true;
     preview.srcObject = stream;
     // Show video independently of loading/compiling the decoder.
-    request.playback = preview.play().then(function () { return null; }, function (error) { return error; });
+    request.playback = preview.play().then(function () {
+      captureDiagnostics.mark("camera.playing", {}, diagnostic); return null;
+    }, function (error) { captureDiagnostics.error("camera.play", error, diagnostic); return error; });
     return { stream: stream };
-  }, function (error) { return { error: error }; });
+  }, function (error) { captureDiagnostics.error("camera.request", error, diagnostic); return { error: error }; });
   return request;
 }
 
@@ -74,14 +83,17 @@ function releaseCaptureHardware() {
 function loadCaptureEngine() {
   if (captureEnginePromise) return captureEnginePromise;
   captureEnginePromise = new Promise(function (resolve, reject) {
+    captureDiagnostics.event("captureBundle.loading");
     const script = document.createElement("script");
-    script.src = "js/capture.bundle.js?v=153";
+    script.src = "js/capture.bundle.js?v=154";
     script.onload = function () {
       captureEngineLoaded = true;
+      captureDiagnostics.mark("captureBundle.ready");
       initPreviewFocus();
       resolve();
     };
     script.onerror = function () {
+      captureDiagnostics.event("captureBundle.failed");
       script.remove();
       captureEnginePromise = null;
       reject(new Error("Could not load capture. Check your connection and try again."));
@@ -99,6 +111,8 @@ async function openCapturePage() {
   // Begin the hardware request before focus/layout work in the capture route.
   performance.mark("webscanner-capture-request");
   const reuseCamera = state.isCameraRunning && state.track?.readyState === "live" && state.stream;
+  captureDiagnostics.start({ reusedCamera: Boolean(reuseCamera), mode: state.isQuantityEntryUnlocked ? "quantity" : "classic" });
+  if (reuseCamera) captureDiagnostics.camera(state.track);
   if (!reuseCamera) {
     if (state.stream) releaseCaptureHardware();
     requestCaptureStream(state.activeDeviceId);
@@ -121,6 +135,7 @@ async function openCapturePage() {
     await startScanning();
   } catch (error) {
     if (!state.capturePageOpen || generation !== state.captureGeneration || error.name === "AbortError") return;
+    captureDiagnostics.error("capture.start", error);
     releaseCaptureHardware();
     state.els.previewPlaceholder.hidden = false;
     state.els.previewPlaceholder.style.display = "grid";
@@ -135,6 +150,7 @@ async function openCapturePage() {
 
 function closeCapturePage(options) {
   if (!state.capturePageOpen) return;
+  captureDiagnostics.end(options?.captured ? "captured" : state.quantityCaptureOpen ? "quantity-cancelled" : "cancelled");
   if (state.quantityCaptureOpen) closeQuantityCapture();
   state.capturePageOpen = false;
   state.captureGeneration += 1;

@@ -6,14 +6,17 @@
   let worker = null;
   let pending = null;
   let sequence = 0;
-  const workerUrl = new URL("zxing-worker.js?v=153", document.currentScript.src);
+  const workerUrl = new URL("zxing-worker.js?v=154", document.currentScript.src);
 
   window.ensureZXingLoaded = function () {
     if (readyPromise) return readyPromise;
     readyPromise = new Promise((resolve, reject) => {
+      const started = performance.now();
+      captureDiagnostics.event("decoder.workerLoading");
       let initialized = false;
       let timer;
       const fail = (error) => {
+        captureDiagnostics.error("decoder.worker", error);
         clearTimeout(timer);
         worker?.terminate();
         worker = null;
@@ -37,6 +40,7 @@
       worker.onmessageerror = () => fail(new Error("Scanner communication failed. Please retry."));
       worker.onmessage = ({ data }) => {
         if (data.type === "ready") {
+          captureDiagnostics.event("decoder.workerReady", { initializeMs: data.initializeMs, wallMs: performance.now() - started });
           initialized = true;
           clearTimeout(timer);
           resolve({
@@ -46,6 +50,7 @@
               return new Promise((resolveFrame, rejectFrame) => {
                 const id = ++sequence;
                 pending = { id, resolve: resolveFrame, reject: rejectFrame, onRegion: options.onRegion, onFocus: options.onFocus,
+                  onDiagnostics: options.onDiagnostics,
                   timer: setTimeout(() => fail(new Error("Scanner read timed out. Please retry.")), 10000) };
                 try {
                   worker.postMessage({ id, buffer: image.data.buffer, width: image.width,
@@ -55,6 +60,7 @@
                     focused: options.focused === true, budgetMs: options.budgetMs || 0,
                     trackRegions: typeof options.onRegion === "function",
                     assistCamera: typeof options.onFocus === "function",
+                    diagnostics: typeof options.onDiagnostics === "function",
                     regionOffset: options.regionOffset || 0,
                     preferredRegion: options.preferredRegion || null,
                     binarizer: options.binarizer || "LocalAverage" }, [image.data.buffer]);
@@ -75,6 +81,7 @@
           const request = pending;
           pending = null;
           clearTimeout(request.timer);
+          try { request.onDiagnostics?.(data.diagnostics); } catch (_) { /* Diagnostics must not interrupt decoding. */ }
           if (data.error) request.reject(new Error(data.error));
           else request.resolve(data.text);
         }

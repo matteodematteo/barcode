@@ -130,10 +130,30 @@ using the same controls as past print requests. Storage failure keeps the curren
 list intact. The most recent 20 saved lists and print requests are retained.
 
 The product editor follows Barcode/Cost, Italian Name, Price/Discount%, and
-Discounted Price/Quantity, with Save on the left and Back on the right. Barcode
+Quantity/Discounted Price, with Save on the left and Back on the right. Barcode
 is read-only and skipped by keyboard navigation; Tab and Enter follow the
 editable fields in their visual order. Discounted-price edits update Discount%.
 Background product refreshes preserve edits already typed in the open form.
+
+Capture diagnostics record automatically on this device. After reproducing a
+slow scan, open **Settings → Capture diagnostics → Download diagnostics** and
+share the JSON file. It contains a summary and detailed trace of recent captures:
+camera/permission and first-frame delays; decoder/WASM loading; requested versus
+actual focus controls and constraint queue/application times; per-frame waits,
+canvas drawing and pixel readback; worker/WASM reads, retry budgets, crop/angle
+passes, confirmation misses and anonymous candidate changes; dropped/stale
+frames; interface long tasks; sampled contrast/sharpness estimates; and network
+request categories/timings. Device/browser details and recording overhead are
+included to help compare reports.
+
+Focus-command completion does not confirm physical lens convergence, and image
+clarity estimates depend on the scene. No photographs, raw barcode values,
+credentials, cookies, device IDs, API bodies, or automatic uploads are included.
+Logs retain at most 12 captures and 180 frame records per capture, preserving
+early and recent frames plus aggregate counts for the full attempt. Image metrics
+sample at most 48×32 positions twice a second from pixels already needed by the
+decoder, with no extra camera/canvas readback. Logs persist after capture closes;
+stored history is trimmed to keep diagnostic storage below roughly 800 KB.
 
 ## Browser checks
 
@@ -153,6 +173,11 @@ Run `node tests/test_capture_flow.cjs` for the quantity popup, overlapping looku
 classic capture, cancellation, cleared-list snapshots and storage failures,
 capture controls, and editor keyboard/discount/quantity behavior. It uses a
 local server, fake camera, and lookup stubs without contacting live services.
+
+`node tests/test_diagnostics.cjs` checks actual EAN-13 decoding through the worker,
+focus/frame/WASM/stall metrics, JSON download, bounded retention, reload
+persistence and exclusion of sensitive values. Recording-overhead measurements
+from this desktop fake-camera test do not replace measurements on a phone.
 
 With the local server running, install the optional test dependency and run:
 

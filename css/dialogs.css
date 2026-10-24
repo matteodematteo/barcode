@@ -9,6 +9,18 @@
     z-index: 20;
   }
 
+  #settingsDialog .dialog-card {
+    max-height: calc(100dvh - 36px);
+    overflow-y: auto;
+    background: var(--panel);
+    padding: 16px;
+    border-radius: 18px;
+  }
+  .capture-diagnostics { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--panel-line); }
+  .capture-diagnostics h3 { margin: 0; font-size: 14px; }
+  #settingsDialog .capture-diagnostics p { font-size: 12px; line-height: 1.5; margin: 8px 0; }
+  #downloadDiagnosticsBtn { min-height: 40px; font-size: 13px; }
+
   .dialog-backdrop.is-open { display: flex; }
 
   .dialog-card {

@@ -7,12 +7,23 @@
 let cookieRequestPromise = null;
 
 async function apiFetch(url, options, loaderOptions) {
+  const diagnostic = captureDiagnostics.current || captureDiagnostics.recent;
+  const started = performance.now();
+  const kind = [["product", CONFIG.infoProxyEndpoint], ["discount", CONFIG.discountProxyEndpoint],
+    ["sales", CONFIG.salesPerformanceProxyEndpoint], ["authentication", CONFIG.cookieProxyEndpoint],
+    ["print", CONFIG.sendTxtEndpoint], ["product-update", CONFIG.updateProxyEndpoint]]
+    .find((entry) => entry[1] === url)?.[0] || "other";
   const trackLoader = loaderOptions?.trackLoader !== false;
   if (trackLoader) {
     showApiLoader();
   }
   try {
-    return await fetch(url, options);
+    const response = await fetch(url, options);
+    captureDiagnostics.event("network.response", { kind, status: response.status, durationMs: performance.now() - started }, diagnostic);
+    return response;
+  } catch (error) {
+    captureDiagnostics.error(`network.${kind}`, error, diagnostic);
+    throw error;
   } finally {
     if (trackLoader) {
       hideApiLoader();

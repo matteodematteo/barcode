@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f5f6f2" />
-  <meta name="webscanner-version" content="153" />
+  <meta name="webscanner-version" content="154" />
   <script>
     // Keep update discovery independent of the cached application bundle.
     // The worker URL stays stable; its own update checks bypass HTTP caching.
@@ -24,12 +24,12 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Web Scanner" />
-  <link rel="manifest" href="manifest.webmanifest?v=153" />
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=153" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=153" />
+  <link rel="manifest" href="manifest.webmanifest?v=154" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=154" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=154" />
   <title>Web Barcode Scanner</title>
-  <link rel="preload" href="js/app.bundle.js?v=153" as="script" />
-  <link rel="preload" href="css/interface.bundle.css?v=153" as="style" />
+  <link rel="preload" href="js/app.bundle.js?v=154" as="script" />
+  <link rel="preload" href="css/interface.bundle.css?v=154" as="style" />
   <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
        round-trips for the above-the-fold shell (base + scanner + layout +
        essential components). The remaining interface styles load as one small sheet below. -->
@@ -360,13 +360,13 @@
   <!-- These sheets affect the visible page geometry. Keep them render-blocking so
        browsers paint the completed interface once instead of restyling sections
        progressively on a slow connection. -->
-  <link rel="stylesheet" href="css/interface.bundle.css?v=153" />
+  <link rel="stylesheet" href="css/interface.bundle.css?v=154" />
 </head>
 <body>
   <main class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=153" width="34" height="34" alt="" decoding="async" /></span>
+        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=154" width="34" height="34" alt="" decoding="async" /></span>
         <div><h1>Web Scanner</h1></div>
       </div>
       <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
@@ -608,6 +608,12 @@
         <button class="btn btn-primary" id="loginSettingsBtn" type="button">Login</button>
         <button class="btn btn-muted" id="closeSettingsBtn" type="button">Back</button>
       </div>
+      <section class="capture-diagnostics" aria-labelledby="captureDiagnosticsTitle">
+        <h3 id="captureDiagnosticsTitle">Capture diagnostics</h3>
+        <p>After a slow capture, download this report and send the file. It records recent camera and scanning timings on this device without photos, barcode values or login details.</p>
+        <button class="btn btn-muted" id="downloadDiagnosticsBtn" type="button">Download diagnostics</button>
+        <p id="captureDiagnosticsStatus" role="status"></p>
+      </section>
     </div>
   </div>
 
@@ -745,12 +751,12 @@
         </div>
         <div class="detail-popup-row detail-popup-row--half">
           <label class="detail-popup-field">
-            <span>Discounted Price</span>
-            <input class="input" id="historyEditDiscountPriceInput" type="text" inputmode="decimal" />
-          </label>
-          <label class="detail-popup-field">
             <span>Quantity</span>
             <input class="input" id="historyEditQtyInput" type="number" min="1" step="1" />
+          </label>
+          <label class="detail-popup-field">
+            <span>Discounted Price</span>
+            <input class="input" id="historyEditDiscountPriceInput" type="text" inputmode="decimal" />
           </label>
         </div>
         <div class="detail-popup-actions">
@@ -767,6 +773,6 @@
     <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
   </div>
   <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
-  <script src="js/app.bundle.js?v=153" defer></script>
+  <script src="js/app.bundle.js?v=154" defer></script>
 </body>
 </html>

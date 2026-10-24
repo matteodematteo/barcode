@@ -291,6 +291,7 @@ function bindDeferredEvents() {
   });
 
   state.els.settingsBtn.addEventListener("click", openSettingsDialog);
+  state.els.downloadDiagnosticsBtn.addEventListener("click", captureDiagnostics.download);
   
   state.els.closeSettingsBtn.addEventListener("click", function() {
     closeSettingsDialog();
@@ -485,7 +486,7 @@ function bindDeferredEvents() {
   state.els.historyEditDialog.addEventListener("keydown", function (event) {
     const fields = [state.els.historyEditPPriceInput, state.els.historyEditItalianNameInput,
       state.els.historyEditSPriceInput, state.els.historyEditSDiscountInput,
-      state.els.historyEditDiscountPriceInput, state.els.historyEditQtyInput];
+      state.els.historyEditQtyInput, state.els.historyEditDiscountPriceInput];
     if (event.key === "Escape") {
       event.preventDefault(); closeHistoryEditDialog(); return;
     }
@@ -537,6 +538,7 @@ function bindDeferredEvents() {
       if (!state.captureFirstFrameMarked) {
         state.captureFirstFrameMarked = true;
         performance.mark("webscanner-camera-frame");
+        captureDiagnostics.mark("camera.firstFrame");
       }
     }
   };
@@ -545,6 +547,11 @@ function bindDeferredEvents() {
   state.els.cameraPreview.addEventListener("canplay", markPreviewAsLive);
   state.els.cameraPreview.addEventListener("playing", markPreviewAsLive);
   state.els.cameraPreview.addEventListener("timeupdate", markPreviewAsLive);
+  ["stalled", "waiting", "suspend", "error"].forEach(function (type) {
+    state.els.cameraPreview.addEventListener(type, function () {
+      if (state.capturePageOpen) captureDiagnostics.event(`video.${type}`, { readyState: state.els.cameraPreview.readyState });
+    });
+  });
 
   window.addEventListener("beforeunload", function () {
     closeCapturePage();

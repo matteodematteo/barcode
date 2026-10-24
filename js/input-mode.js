@@ -49,6 +49,7 @@ function openQuantityCapture(barcode) {
   if (!code || !state.isQuantityEntryUnlocked || state.quantityCaptureOpen) return;
   state.quantityReturnFocus = document.activeElement;
   state.quantityCaptureOpen = true;
+  captureDiagnostics.mark("quantity.open");
   state.pendingQuantityCode = code;
   state.quantityReplaceOnDigit = true;
   state.els.quantityInput.value = "1";
@@ -167,6 +168,7 @@ async function addCurrentBarcodeWithQuantity() {
   }
 
   const comparisonQty = sanitizeQuantity(state.els.quantityInput.value);
+  captureDiagnostics.mark("quantity.confirmed");
   state.els.quantityInput.value = String(comparisonQty);
   quantitySubmissionPending = true;
   closeQuantityCapture();
