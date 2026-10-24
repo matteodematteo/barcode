@@ -26,7 +26,7 @@
 
   .qty-pad-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
   }
 
@@ -42,6 +42,8 @@
   }
 
   .qty-pad-key[data-key="enter"] {
+    grid-column: 1 / -1;
+    min-height: 44px;
     background: linear-gradient(135deg, var(--accent), var(--accent-strong));
     color: #fff7f2;
     border-color: transparent;

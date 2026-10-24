@@ -4,16 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f5f6f2" />
-  <meta name="webscanner-version" content="148" />
+  <meta name="webscanner-version" content="149" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Web Scanner" />
-  <link rel="manifest" href="manifest.webmanifest?v=148" />
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=148" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=148" />
+  <link rel="manifest" href="manifest.webmanifest?v=149" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=149" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=149" />
   <title>Web Barcode Scanner</title>
-  <link rel="preload" href="js/app.bundle.js?v=148" as="script" />
-  <link rel="preload" href="css/interface.bundle.css?v=148" as="style" />
+  <link rel="preload" href="js/app.bundle.js?v=149" as="script" />
+  <link rel="preload" href="css/interface.bundle.css?v=149" as="style" />
   <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
        round-trips for the above-the-fold shell (base + scanner + layout +
        essential components). The remaining interface styles load as one small sheet below. -->
@@ -344,13 +344,13 @@
   <!-- These sheets affect the visible page geometry. Keep them render-blocking so
        browsers paint the completed interface once instead of restyling sections
        progressively on a slow connection. -->
-  <link rel="stylesheet" href="css/interface.bundle.css?v=148" />
+  <link rel="stylesheet" href="css/interface.bundle.css?v=149" />
 </head>
 <body>
   <main class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=148" width="34" height="34" alt="" decoding="async" /></span>
+        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=149" width="34" height="34" alt="" decoding="async" /></span>
         <div><h1>Web Scanner</h1></div>
       </div>
       <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
@@ -480,16 +480,16 @@
         <button class="qty-pad-key" type="button" data-key="1">1</button>
         <button class="qty-pad-key" type="button" data-key="2">2</button>
         <button class="qty-pad-key" type="button" data-key="3">3</button>
-        <button class="qty-pad-key" type="button" data-key="backspace">Del</button>
         <button class="qty-pad-key" type="button" data-key="4">4</button>
         <button class="qty-pad-key" type="button" data-key="5">5</button>
         <button class="qty-pad-key" type="button" data-key="6">6</button>
-        <button class="qty-pad-key" type="button" data-key="clear">C</button>
         <button class="qty-pad-key" type="button" data-key="7">7</button>
         <button class="qty-pad-key" type="button" data-key="8">8</button>
         <button class="qty-pad-key" type="button" data-key="9">9</button>
+        <button class="qty-pad-key" type="button" data-key="clear" aria-label="Clear quantity">C</button>
         <button class="qty-pad-key" type="button" data-key="0">0</button>
-        <button class="qty-pad-key" type="button" data-key="enter" style="grid-column: 1 / -1;">Enter / Add</button>
+        <button class="qty-pad-key" type="button" data-key="backspace" aria-label="Delete last digit" title="Delete last digit"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5h11a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H9l-7-7 7-7Z"/><path d="m12 9 6 6m0-6-6 6"/></svg></button>
+        <button class="qty-pad-key" type="button" data-key="enter">Enter / Add</button>
       </div>
     </section>
 
@@ -755,6 +755,6 @@
     <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
   </div>
   <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
-  <script src="js/app.bundle.js?v=148" defer></script>
+  <script src="js/app.bundle.js?v=149" defer></script>
 </body>
 </html>

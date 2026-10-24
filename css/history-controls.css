@@ -79,6 +79,11 @@
 .qty-pad-key[data-key="enter"] {
   background: #157557;
 }
+.qty-pad-key[data-key="backspace"] svg {
+  display: block;
+  margin: auto;
+  pointer-events: none;
+}
 .qty-pad-card.is-disabled .qty-pad-key {
   background: #f8f9f6;
   border-color: #edf1ec;

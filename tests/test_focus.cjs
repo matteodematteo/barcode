@@ -40,8 +40,11 @@ async function main() {
   assert.equal(await t.focus({ newScan: true }), true);
   assert.equal(t.settings.focusMode, 'continuous');
   assert.equal(t.settings.pointsOfInterest[0].x, .5);
+  const startupCalls = t.calls.length;
+  await t.focus({ newScan: true });
+  assert.equal(t.calls.length, startupCalls, 'healthy autofocus should not restart on every capture');
   assert.equal(await t.focus({ manual: true, point: { x: .2, y: .8 } }), true);
-  assert.equal(t.settings.focusMode, 'single-shot');
+  assert.equal(t.settings.focusMode, 'continuous');
   assert.equal(t.settings.pointsOfInterest[0].x, .2);
   assert.equal(t.state.els.focusHint.textContent, 'Focus requested');
   assert.equal(await t.focus({ force: true, point: { x: .9, y: .9 } }), false);
@@ -51,7 +54,9 @@ async function main() {
     assert.equal(call.frameRate.ideal, 30);
     assert.equal(Object.assign({}, ...call.advanced).torch, true);
   }
-  await [...t.timers.values()].find(x => x.delay === 1200).fn();
+  assert.equal([...t.timers.values()].some(x => x.delay === 1200), false, 'no delayed lens-mode switch');
+  for (const timer of [...t.timers.values()]) await timer.fn();
+  assert.equal(await t.focus({ force: true, point: { x: .9, y: .9 } }), false);
   assert.equal(t.settings.focusMode, 'continuous');
   assert.equal(t.settings.pointsOfInterest[0].x, .2);
 
@@ -82,15 +87,16 @@ async function main() {
   assert.equal(t.calls.length, 1);
   assert.equal([...t.timers.values()].some(x => x.delay === 1200), false);
 
-  // A stopped capture cannot run a queued focus or delayed autofocus restore.
+  // A stopped capture cannot run a queued focus; reopening resets the target.
   t = setup();
   await t.focus({ manual: true, point: { x: .3, y: .3 } });
-  const restore = [...t.timers.values()].find(x => x.delay === 1200).fn;
   t.run('clearFocusRefreshTimers()');
+  await t.focus({ newScan: true });
+  assert.equal(t.settings.pointsOfInterest[0].x, .5);
   t.state.capturePageOpen = false;
   t.state.scanSession++;
   const count = t.calls.length;
-  await restore();
+  for (const timer of [...t.timers.values()]) await timer.fn();
   assert.equal(t.calls.length, count);
   assert.equal(await t.focus({ manual: true }), false);
 
@@ -100,6 +106,24 @@ async function main() {
   assert.equal(await t.focus({ manual: true, point: { x: .4, y: .6 } }), true);
   assert.match(t.state.els.focusHint.textContent, /point focus unavailable/);
   assert.equal(t.calls.length, 2);
+
+  // Single-shot-only lenses remain available, with no forced mode restoration.
+  t = setup(['single-shot']);
+  assert.equal(await t.focus({ manual: true, point: { x: .2, y: .3 } }), true);
+  assert.equal(t.settings.focusMode, 'single-shot');
+  assert.equal([...t.timers.values()].some(x => x.delay === 1200), false);
+
+  // Automatic barcode assistance must leave hardware zoom unchanged.
+  t = setup();
+  t.state.isScanning = true;
+  t.settings.zoom = 1;
+  t.track.getCapabilities = () => ({ focusMode: ['continuous'], zoom: { min: 1, max: 4, step: .1 } });
+  t.run('assistSmallBarcode({ x: 30, y: 30, width: 20, height: 10 }, { sx: 0, sy: 0, sw: 1920, sh: 1080, outputWidth: 1920, outputHeight: 1080, videoWidth: 1920, videoHeight: 1080 }, 1)');
+  t.run('assistSmallBarcode({ x: 30, y: 30, width: 20, height: 10 }, { sx: 0, sy: 0, sw: 1920, sh: 1080, outputWidth: 1920, outputHeight: 1080, videoWidth: 1920, videoHeight: 1080 }, 1)');
+  await new Promise(setImmediate);
+  assert.equal(t.settings.zoom, 1);
+  assert.ok(t.calls.length > 0, 'barcode assistance still requests focus');
+  assert.ok(t.calls.every(call => call.advanced.every(entry => entry.zoom === undefined)));
   t = setup([], false);
   assert.equal(await t.focus({ manual: true, point: { x: .4, y: .6 } }), false);
   assert.equal(t.calls.length, 0);
@@ -119,6 +143,6 @@ async function main() {
   assert.equal(point.x, (1920 - 540) / 2 / 1920);
   assert.equal(point.y, 0);
   assert.equal(t.run('getPreviewFocusPoint(5, 20)'), null);
-  console.log('PASS: startup, tap priority, rapid taps, continuous restore, cancellation, fallback, preserved quality/torch, cropped coordinates');
+  console.log('PASS: immediate continuous focus, no mode timer or automatic zoom, persistent tap priority, rapid taps, cancellation, fallback, preserved quality/torch, cropped coordinates');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

@@ -89,7 +89,13 @@ async function main() {
         const actual = await page.evaluate(() => state.track.getSettings().pointsOfInterest[0]);
         assert.ok(Math.abs(point.x - actual.x) < .002);
         assert.ok(Math.abs(point.y - actual.y) < .002);
-        await page.waitForFunction(() => state.track.getSettings().focusMode === 'continuous');
+        assert.equal(await page.evaluate(() => state.track.getSettings().focusMode), 'continuous');
+        const callsAfterTap = await page.evaluate(() => window.focusCalls.length);
+        await page.waitForTimeout(1300);
+        assert.equal(await page.evaluate(() => window.focusCalls.length), callsAfterTap,
+          'a tap must not schedule a second lens-mode change');
+        assert.equal(await page.evaluate(() => requestFocusRefresh(state.track, { force: true, point: { x: .1, y: .1 } })), false,
+          'automatic assistance must not override a selected point');
         // Multiple taps inside the old 700ms cooldown still select the last point.
         await page.touchscreen.tap(box.x + box.width * .35, box.y + box.height * .55);
         await page.touchscreen.tap(box.x + box.width * .65, box.y + box.height * .6);

@@ -118,9 +118,8 @@ function cleanupScanTimer() {
 function clearFocusRefreshTimers() {
   const focus = state.track && cameraFocusStates.get(state.track);
   if (focus) {
-    window.clearTimeout(focus.restoreTimer);
     focus.manualRequest += 1;
-    focus.manualUntil = 0;
+    focus.manualPoint = false;
   }
   if (state.els?.focusTarget) state.els.focusTarget.hidden = true;
   window.clearTimeout(previewFocusFeedbackTimer);
@@ -903,7 +902,7 @@ async function captureAttempt(session) {
     confirmAcrossFrames("");
     // Single-shot-only cameras otherwise retain focus at the previous distance.
     const focus = cameraFocusStates.get(state.track);
-    if (focus?.mode === "single-shot" && Date.now() - focus.updatedAt >= 700) {
+    if (focus?.mode === "single-shot" && Date.now() - focus.updatedAt >= 2000) {
       requestFocusRefresh(state.track, { force: true }).catch(() => {});
     }
     // Keep scanning fresh 1080p frames with the next crop/detail pass.
@@ -1062,7 +1061,7 @@ function applyCameraTrackConstraints(track, changes, session) {
 const cameraBarcodeAssist = new WeakMap();
 function assistSmallBarcode(region, frame, session) {
   const track = state.track;
-  if (Date.now() < (cameraFocusStates.get(track)?.manualUntil || 0)) return;
+  if (cameraFocusStates.get(track)?.manualPoint) return;
   if (session !== state.scanSession || !state.isScanning || !state.capturePageOpen ||
       !isCurrentCameraTrack(track) || !track.getCapabilities || !track.applyConstraints) return;
   if (![region?.x, region?.y, region?.width, region?.height].every(Number.isFinite) ||
@@ -1087,18 +1086,8 @@ function assistSmallBarcode(region, frame, session) {
   if (assist.count < 2 || assist.acted) return;
   assist.acted = true;
   requestFocusRefresh(track, { force: true, point: target, session });
-  // Native camera zoom can supply better sensor pixels than enlarging an old
-  // blurry frame. Retain 1080p/30fps, torch and focus in the constraint queue.
-  try {
-    const zoom = track.getCapabilities().zoom, current = track.getSettings?.().zoom;
-    if (!zoom || !Number.isFinite(zoom.min) || !Number.isFinite(zoom.max) ||
-        !Number.isFinite(current) || current <= 0 || target.width >= 0.24) return;
-    const desired = Math.min(zoom.max, current * Math.min(2, 0.38 / target.width));
-    const step = zoom.step > 0 ? zoom.step : 0.01;
-    const value = Math.max(zoom.min, Math.min(zoom.max, zoom.min + Math.floor((desired - zoom.min) / step) * step));
-    if (value <= current * 1.15) return;
-    applyCameraTrackConstraints(track, { zoom: value }, session).catch(() => {});
-  } catch (_) { /* Camera controls are optional on iOS and Android. */ }
+  // Keep magnification stable: automatic zoom changes can restart the lens
+  // hunt and move the barcode away from the focus point we just requested.
 }
 
 
@@ -1107,15 +1096,16 @@ async function requestFocusRefresh(track, options = {}) {
   let focus = cameraFocusStates.get(track);
   if (!focus) {
     focus = { mode: "", pending: null, updatedAt: 0, lastForcedAt: -Infinity,
-      pointRejected: false, manualRequest: 0, manualUntil: 0, restoreTimer: 0 };
+      pointRejected: false, manualRequest: 0, manualPoint: false, point: null };
     cameraFocusStates.set(track, focus);
   }
   const session = options.session ?? state.scanSession;
   const manualRequest = options.manual ? ++focus.manualRequest : focus.manualRequest;
   if (options.manual) {
-    focus.manualUntil = Date.now() + 3000;
-    window.clearTimeout(focus.restoreTimer);
-  } else if (Date.now() < focus.manualUntil) return false;
+    // A user's selected target remains authoritative for this capture. Do not
+    // let decoder candidates change it again a few seconds after the tap.
+    focus.manualPoint = true;
+  } else if (focus.manualPoint) return false;
   // A tap must wait for startup/torch work, rather than being discarded.
   // When several taps arrive, only the latest waiting target is applied.
   while (focus.pending) {
@@ -1129,18 +1119,18 @@ async function requestFocusRefresh(track, options = {}) {
     // Capability detection also covers iPhones if their browser exposes focus.
     // Otherwise native autofocus continues without sending camera constraints.
     const modes = track.getCapabilities().focusMode || [];
-    const mode = options.manual && modes.includes("single-shot") ? "single-shot" :
-      modes.includes("continuous") ? "continuous" :
+    const mode = modes.includes("continuous") ? "continuous" :
       modes.includes("single-shot") ? "single-shot" : "";
     if (!mode) return false;
     const settings = track.getSettings?.() || {};
     const now = Date.now();
-    // New scans restore continuous autofocus and center metering. Explicit
-    // taps request a single sweep where available, even during the cooldown.
-    const force = options.manual || options.force || (options.newScan && now - focus.updatedAt >= 1500);
+    // Update the metering point in continuous mode without switching modes
+    // away and back on a timer. Avoid restarting healthy autofocus on reopen.
+    const resetPoint = options.newScan && focus.point && (focus.point.x !== 0.5 || focus.point.y !== 0.5);
+    const force = options.manual || options.force || resetPoint;
     if (!force && (mode === "continuous" && settings.focusMode === mode ||
         focus.mode === mode && (!settings.focusMode || settings.focusMode === mode))) return true;
-    if (force && !options.manual && now - focus.lastForcedAt < 700) return false;
+    if (force && !options.manual && !resetPoint && now - focus.lastForcedAt < 700) return false;
     if (force) focus.lastForcedAt = now;
 
     let point;
@@ -1171,21 +1161,11 @@ async function requestFocusRefresh(track, options = {}) {
       const actualMode = track.getSettings?.().focusMode;
       if (actualMode && actualMode !== mode) return false;
       focus.mode = mode;
+      if (point && !focus.pointRejected) focus.point = point;
       focus.updatedAt = Date.now();
       if (options.manual && manualRequest === focus.manualRequest) {
         // The API acknowledges a request; it does not report lens convergence.
         setPreviewFocusFeedback(point && !focus.pointRejected ? "Focus requested" : "Autofocus refreshed · point focus unavailable");
-        // Resume tracking distance changes after the one-shot lens sweep.
-        // Preserve the chosen point until the user starts another capture.
-        if (mode === "single-shot" && modes.includes("continuous")) {
-          focus.restoreTimer = window.setTimeout(async function () {
-            if (!state.capturePageOpen || !isCurrentCameraTrack(track) || session !== state.scanSession ||
-                manualRequest !== focus.manualRequest) return;
-            try {
-              if (await applyCameraTrackConstraints(track, { focusMode: "continuous" }, session)) focus.mode = "continuous";
-            } catch (_) { /* Leave working one-shot focus available for another tap. */ }
-          }, 1200);
-        }
       }
       return true;
     }()).catch(() => false);

@@ -52,8 +52,10 @@ on Capture also warms the decoder without opening hardware.
 The camera requests continuous autofocus when available and configures the lens
 as soon as playback starts, without waiting for the decoder. Tap or click the
 preview to select a focus point; a yellow target marks the selected location.
-Taps take priority over automatic barcode assistance and use a single autofocus
-sweep on cameras that offer it, then resume continuous autofocus. The app maps
+Taps keep continuous autofocus aimed at the selected point for the rest of that
+capture, without a delayed switch to another focus mode. Cameras that only offer
+single-shot focus still use it. Automatic barcode assistance does not change
+hardware zoom or override a selected point. The app maps
 the selected point through the preview crop and preserves resolution and torch
 settings. The hint reports when point focus is unavailable on a browser or lens.
 "Focus requested" acknowledges the camera command; the browser cannot confirm
@@ -102,6 +104,8 @@ Last 30 days remains the initial date range. Clean clears both dates before Appl
 Capture-list actions use compact Delete, Clear list, and Print buttons, followed
 by a green **+ More** control. Its active switch is pale yellow (RGB 255, 244, 202).
 Quantity mode shows a lighter, disabled keypad until a barcode is present.
+The keypad has three columns: 1–3, 4–6, 7–9, then C, 0, and an icon-only delete
+key. A taller Enter / Add button spans the final row.
 Capture, typing, closest-match selection, clearing, submission, and update-draft
 restoration refresh that state without adding camera or network startup work.
 
