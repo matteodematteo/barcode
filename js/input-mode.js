@@ -5,17 +5,16 @@
 let quantitySubmissionPending = false;
 
 function canEnterQuantity() {
-  return Boolean(state.isQuantityEntryUnlocked && !quantitySubmissionPending &&
-    String(state.els?.barcodeInput?.value || "").trim());
+  return Boolean(state.quantityCaptureOpen && state.isQuantityEntryUnlocked &&
+    !quantitySubmissionPending && state.pendingQuantityCode);
 }
 
 function updateQuantityPadAvailability() {
   const enabled = canEnterQuantity();
   if (state.els?.quantityInput) {
     state.els.quantityInput.setAttribute("aria-disabled", String(!enabled));
-    state.els.quantityInput.tabIndex = enabled ? 0 : -1;
+    state.els.quantityInput.tabIndex = -1;
   }
-  if (state.els?.addBarcodeBtn) state.els.addBarcodeBtn.disabled = !enabled;
   if (!state.els?.quantityPad || !state.els?.quantityPadCard) return;
   state.els.quantityPad.querySelectorAll("button").forEach(button => {
     button.disabled = !enabled;
@@ -25,38 +24,76 @@ function updateQuantityPadAvailability() {
 }
 
 function updateEntryModeControls() {
-  if (!state.els?.entryModeBtn || !state.els?.quantityInput || !state.els?.addBarcodeBtn || !state.els?.entryModeIcon) {
+  if (!state.els?.entryModeBtn || !state.els?.entryModeIcon) {
     return;
   }
 
   const unlocked = Boolean(state.isQuantityEntryUnlocked);
-  state.els.entryModeBtn.setAttribute("aria-label", unlocked ? "Unlocked barcode entry" : "Locked barcode entry");
-  state.els.entryModeBtn.title = unlocked ? "Unlocked barcode entry" : "Locked barcode entry";
+  const label = unlocked ? "Quantity capture mode · switch to classic" : "Classic capture mode · switch to quantity";
+  state.els.entryModeBtn.setAttribute("aria-label", label);
+  state.els.entryModeBtn.title = label;
+  state.els.entryModeBtn.setAttribute("aria-pressed", String(unlocked));
   state.els.entryModeBtn.classList.toggle("btn-primary", unlocked);
   state.els.entryModeBtn.classList.toggle("btn-muted", !unlocked);
-  state.els.quantityInput.disabled = false;
-  state.els.quantityInput.readOnly = true;
-  state.els.quantityInput.classList.toggle("is-locked", !unlocked);
-  if (unlocked) {
-    if (String(state.els.quantityInput.value || "") === "1") {
-      state.els.quantityInput.value = "";
-    } else {
-      state.els.quantityInput.value = sanitizeEditableQuantity(state.els.quantityInput.value);
-    }
-  } else {
-    state.els.quantityInput.value = "1";
-  }
-  if (state.els.quantityPad && state.els.quantityPadCard) {
-    state.els.quantityPadCard.hidden = !unlocked;
-  }
   updateQuantityPadAvailability();
   if (state.els.productInfoSection) {
-    state.els.productInfoSection.hidden = unlocked;
+    state.els.productInfoSection.hidden = false;
   }
   if (typeof syncSalesPerformanceRequests === "function") syncSalesPerformanceRequests();
   state.els.entryModeIcon.innerHTML = unlocked
     ? '<path d="M16 11V8a4 4 0 0 0-7.74-1.5"></path><rect x="5" y="11" width="14" height="10" rx="2"></rect>'
     : '<rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 1 1 8 0v3"></path>';
+}
+
+
+function openQuantityCapture(barcode) {
+  const code = String(barcode || "").trim();
+  if (!code || !state.isQuantityEntryUnlocked || state.quantityCaptureOpen) return;
+  state.quantityReturnFocus = document.activeElement;
+  state.quantityCaptureOpen = true;
+  state.pendingQuantityCode = code;
+  state.quantityReplaceOnDigit = true;
+  state.els.quantityInput.value = "1";
+  state.els.quantityBarcode.textContent = code;
+  state.els.quantityStatus.textContent = "";
+  state.els.quantityPadCard.hidden = false;
+  state.els.quantityPadCard.classList.add("is-open");
+  state.els.quantityPadCard.setAttribute("aria-hidden", "false");
+  document.querySelector("main").inert = true;
+  state.els.capturePage.inert = true;
+  state.els.capturePage.setAttribute("aria-modal", "false");
+  document.body.classList.add("is-entering-quantity");
+  if (state.capturePageOpen && captureEngineLoaded) {
+    stopPreviewWatchdog();
+    clearFocusRefreshTimers();
+  }
+  updateQuantityPadAvailability();
+  setStatus("Choose quantity");
+  state.els.quantityPad.querySelector('[data-key="1"]').focus({ preventScroll: true });
+}
+
+
+function closeQuantityCapture() {
+  if (!state.quantityCaptureOpen) return;
+  state.quantityCaptureOpen = false;
+  state.pendingQuantityCode = "";
+  state.els.quantityPadCard.hidden = true;
+  state.els.quantityPadCard.classList.remove("is-open");
+  state.els.quantityPadCard.setAttribute("aria-hidden", "true");
+  state.els.capturePage.inert = false;
+  state.els.capturePage.setAttribute("aria-modal", "true");
+  document.querySelector("main").inert = state.capturePageOpen;
+  document.body.classList.remove("is-entering-quantity");
+  updateQuantityPadAvailability();
+}
+
+
+function cancelQuantityCapture() {
+  const returnFocus = state.quantityReturnFocus;
+  closeQuantityCapture();
+  if (state.capturePageOpen) closeCapturePage();
+  else if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+  setStatus("Capture cancelled");
 }
 
 
@@ -72,11 +109,13 @@ async function handleQuantityPadInput(key) {
   }
 
   if (key === "clear") {
+    state.quantityReplaceOnDigit = false;
     state.els.quantityInput.value = "";
     return;
   }
 
   if (key === "backspace") {
+    state.quantityReplaceOnDigit = false;
     const trimmed = currentValue.slice(0, -1);
     state.els.quantityInput.value = trimmed;
     return;
@@ -86,7 +125,8 @@ async function handleQuantityPadInput(key) {
     return;
   }
 
-  const appended = `${currentValue}${key}`;
+  const appended = `${state.quantityReplaceOnDigit ? "" : currentValue}${key}`;
+  state.quantityReplaceOnDigit = false;
   state.els.quantityInput.value = sanitizeEditableQuantity(appended);
 }
 
@@ -121,18 +161,22 @@ function setQuantityEntryMode(unlocked, options) {
 
 
 async function addCurrentBarcodeWithQuantity() {
-  if (quantitySubmissionPending) return;
-  const code = String(state.els.barcodeInput.value || "").trim();
-  if (!code) {
-    setStatus("Type or scan a barcode first");
-    moveFocusToInput(state.els.barcodeInput);
+  if (!canEnterQuantity()) return;
+  const code = state.pendingQuantityCode;
+  if (!Number.isSafeInteger(Number(state.els.quantityInput.value)) || Number(state.els.quantityInput.value) < 1) {
+    state.els.quantityStatus.textContent = "Enter a quantity of at least 1.";
     return;
   }
 
   const comparisonQty = sanitizeQuantity(state.els.quantityInput.value);
   state.els.quantityInput.value = String(comparisonQty);
   quantitySubmissionPending = true;
-  updateQuantityPadAvailability();
+  closeQuantityCapture();
+  if (state.capturePageOpen) closeCapturePage({ captured: true });
+  else moveFocusToInput(state.els.barcodeInput);
+  quantitySubmissionPending = false;
+  // Add the record and leave the camera immediately; network lookup continues
+  // on the main screen. A later capture must not be cleared by this request.
   try {
     await fetchProductInfo(code, {
       allowClosestSearch: false,
@@ -141,9 +185,7 @@ async function addCurrentBarcodeWithQuantity() {
     });
   } finally {
     quantitySubmissionPending = false;
-    state.els.barcodeInput.value = "";
-    state.els.quantityInput.value = "";
-    updateEntryModeControls();
+    updateQuantityPadAvailability();
   }
 }
 

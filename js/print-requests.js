@@ -1,6 +1,6 @@
 "use strict";
 
-/* Successful TXT and label sends saved on this device for later viewing/printing. */
+/* Sent print requests and cleared capture lists saved for later viewing/printing. */
 const MAX_PRINT_REQUESTS = 20;
 
 function loadPrintTunnelPreference() {
@@ -28,19 +28,11 @@ function savePrintTunnelPreference(tunnelId) {
 
 function copyPrintRequestItem(item) {
   const row = normalizeHistoryItem(item);
-  return {
-    barcode: row.barcode,
-    italian_name: row.italian_name,
-    comparison_qty: row.comparison_qty,
-    s_price: row.s_price,
-    s_discount: row.s_discount,
-    discount_price: row.discount_price,
-    has_discount: row.has_discount
-  };
+  return { ...row };
 }
 
 function normalizePrintRequest(value) {
-  if (!value || !["TXT", "60*38", "40*25"].includes(value.type) || !Array.isArray(value.items)) return null;
+  if (!value || !["LIST", "TXT", "60*38", "40*25"].includes(value.type) || !Array.isArray(value.items)) return null;
   const items = value.items.map(copyPrintRequestItem).filter((item) => item.barcode);
   if (!items.length) return null;
   return {
@@ -70,20 +62,21 @@ function recordSentPrintRequest(type, items, timestamp, tunnelId) {
     type, sentAt: new Date().toISOString(), tunnelId, timestamp, items
   });
   if (!entry) return false;
-  state.printRequests.unshift(entry);
-  state.printRequests.length = Math.min(state.printRequests.length, MAX_PRINT_REQUESTS);
-  renderPrintRequestHistory();
-  state.els.printBtn.disabled = false;
+  const next = [entry, ...state.printRequests].slice(0, MAX_PRINT_REQUESTS);
   try {
-    localStorage.setItem(CONFIG.printRequestStorageKey, JSON.stringify(state.printRequests));
-    return true;
+    // Commit the snapshot before a caller is allowed to clear the source list.
+    localStorage.setItem(CONFIG.printRequestStorageKey, JSON.stringify(next));
   } catch {
     return false;
   }
+  state.printRequests = next;
+  renderPrintRequestHistory();
+  state.els.printBtn.disabled = false;
+  return true;
 }
 
 function printRequestTypeLabel(type) {
-  return type === "60*38" ? "BIG 60*38" : type === "40*25" ? "STICKER 40*25" : "TXT";
+  return type === "LIST" ? "Saved list" : type === "60*38" ? "BIG 60*38" : type === "40*25" ? "STICKER 40*25" : "TXT";
 }
 
 function formatPrintRequestDate(iso) {
@@ -99,7 +92,7 @@ function renderPrintRequestHistory() {
   if (!state.printRequests.length) {
     const empty = document.createElement("p");
     empty.className = "print-request-empty";
-    empty.textContent = "No sent requests yet.";
+    empty.textContent = "No saved lists or sent requests yet.";
     container.replaceChildren(empty);
     return;
   }

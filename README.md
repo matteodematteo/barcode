@@ -1,8 +1,12 @@
 # Web Scanner
 
 A dependency-free barcode scanner and product lookup app. Tap **Capture barcode**
-to open the dedicated capture screen. A barcode confirmed on two fresh camera
-frames returns to the main screen immediately; product lookup continues there.
+to open the dedicated capture screen. In classic mode, a barcode confirmed on
+two fresh frames returns to the main screen immediately. In quantity mode,
+confirmation opens a quantity keypad over the live preview; Enter / Add saves
+the selected quantity and returns immediately. Product lookup continues on the
+main screen. The lock/unlock mode switch floats at the bottom right, below
+Capture. Product details and sales tabs remain available in both modes.
 After capture, decoding pauses and the camera stays active behind the main
 screen for the next Capture tap. Back, Escape, leaving the page, and
 backgrounding the app release the camera. Returning to the main screen after
@@ -103,11 +107,22 @@ Last 30 days remains the initial date range. Clean clears both dates before Appl
 
 Capture-list actions use compact Delete, Clear list, and Print buttons, followed
 by a green **+ More** control. Its active switch is pale yellow (RGB 255, 244, 202).
-Quantity mode shows a lighter, disabled keypad until a barcode is present.
-The keypad has three columns: 1–3, 4–6, 7–9, then C, 0, and an icon-only delete
-key. A taller Enter / Add button spans the final row.
-Capture, typing, closest-match selection, clearing, submission, and update-draft
-restoration refresh that state without adding camera or network startup work.
+The quantity keypad appears only as a popup after capture or typed-barcode
+confirmation. Its three columns are 1–3, 4–6, 7–9, then C, 0, and icon-only delete.
+A taller Enter / Add button spans the final row. Quantity starts at 1; the first
+digit replaces it. Cancel, Escape, or camera Back discards the pending capture.
+There is no quantity box or permanent keypad on the main screen.
+
+Confirming Clear list first stores a full snapshot in Recent print requests,
+labelled Saved list. Saved lists survive reloads and can be viewed or printed
+using the same controls as past print requests. Storage failure keeps the current
+list intact. The most recent 20 saved lists and print requests are retained.
+
+The product editor follows Barcode/Cost, Italian Name, Price/Discount%, and
+Discounted Price/Quantity, with Save on the left and Back on the right. Barcode
+is read-only and skipped by keyboard navigation; Tab and Enter follow the
+editable fields in their visual order. Discounted-price edits update Discount%.
+Background product refreshes preserve edits already typed in the open form.
 
 ## Browser checks
 
@@ -122,6 +137,11 @@ Edge available, run `node tests/test_focus_browser.cjs`. It starts its own local
 server and checks the deployed bundles with fake video and simulated lens
 controls, including decoder delays, rapid taps, unsupported controls, camera
 reuse, and cancellation. Physical autofocus still requires testing on a phone.
+
+Run `node tests/test_capture_flow.cjs` for the quantity popup, overlapping lookups,
+classic capture, cancellation, cleared-list snapshots and storage failures,
+floating controls, and editor keyboard/discount/quantity behavior. It uses a
+local server, fake camera, and lookup stubs without contacting live services.
 
 With the local server running, install the optional test dependency and run:
 

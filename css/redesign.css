@@ -133,6 +133,83 @@ body.is-capturing { overflow: hidden; }
 
 .brand-icon img { display: block; width: 100%; height: 100%; object-fit: contain; border-radius: inherit; }
 
+/* Keep capture controls within thumb reach without hiding the last record. */
+.app-shell { padding-bottom: calc(170px + env(safe-area-inset-bottom)); }
+.capture-actions {
+  position: fixed;
+  z-index: 15;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(18px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+}
+.capture-actions #scanBtn {
+  width: auto;
+  height: 52px;
+  padding: 0 18px;
+  border-radius: 18px;
+  box-shadow: 0 5px 20px #123b2933;
+}
+.capture-actions #entryModeBtn {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  min-width: 52px;
+  height: 52px;
+  border: 1px solid var(--panel-line);
+  border-radius: 18px;
+  box-shadow: 0 4px 16px #123b2926;
+}
+.capture-actions #entryModeBtn.btn-muted { background: #fff; }
+.capture-actions #entryModeIcon { width: 23px; height: 23px; }
+body.is-capturing .capture-actions { visibility: hidden; }
+
+body.is-entering-quantity { overflow: hidden; }
+#quantityPadCard {
+  z-index: 60;
+  padding: max(12px, env(safe-area-inset-top)) 16px max(12px, env(safe-area-inset-bottom));
+  background: #06120c88;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+#quantityPadCard .quantity-capture-card {
+  width: min(100%, 350px);
+  max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  overflow-y: auto;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--panel-line);
+  border-radius: 20px;
+  padding: 16px;
+  box-shadow: 0 18px 60px #0005;
+}
+.quantity-capture-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.quantity-capture-heading h2 { font-size: 1rem; margin: 0; }
+.quantity-capture-heading .btn { width: auto; flex: 0 0 auto; min-height: 34px; padding: 0 10px; font-size: 12px; }
+#quantityBarcode { margin: 8px 0; overflow-wrap: anywhere; font-size: 13px; color: var(--muted); }
+#quantityInput { width: 100%; height: 54px; margin-bottom: 12px; text-align: right; font-size: 28px; font-weight: 700; }
+#quantityPad .qty-pad-key { min-height: 44px; }
+#quantityPad .qty-pad-key[data-key="enter"] { min-height: 50px; }
+#quantityStatus { margin: 8px 0 0; color: var(--danger); font-size: 12px; }
+#quantityStatus:empty { display: none; }
+body.is-entering-quantity .focus-hint { visibility: hidden; }
+@media (max-height: 480px) {
+  #quantityPadCard .quantity-capture-card { padding: 12px; }
+  .quantity-capture-heading .btn { min-height: 30px; }
+  #quantityBarcode { margin: 4px 0; font-size: 12px; }
+  #quantityInput { height: 36px; margin-bottom: 8px; font-size: 24px; }
+  #quantityPad { gap: 6px; }
+  #quantityPad .qty-pad-key { min-height: 36px; }
+  #quantityPad .qty-pad-key[data-key="enter"] { min-height: 40px; }
+}
+
+/* The edit form follows its visual field order on small screens and keyboards. */
+#historyEditDialog .dialog-card { height: auto; max-height: calc(100dvh - 28px); background: var(--panel); padding: 16px; border-radius: 18px; }
+#historyEditDialog .input { min-width: 0; width: 100%; }
+#historyEditDialog .save-note:empty { display: none; }
+
 /* Tap-to-focus feedback above the live camera preview. */
 .focus-target {
     position: absolute;

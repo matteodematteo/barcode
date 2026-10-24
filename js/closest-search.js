@@ -308,9 +308,7 @@ async function handleClosestSearchSelection(index) {
     updateQuantityPadAvailability();
     clearResultFields();
     closeClosestSearchDialog();
-    setStatus(`Selected ${barcode}. Tap Enter / Add to send request.`);
-    moveFocusToInput(state.els.quantityInput);
-    selectEntireInputValue({ target: state.els.quantityInput });
+    openQuantityCapture(barcode);
     return;
   }
 
@@ -379,8 +377,7 @@ async function handleClosestSearchSelection(index) {
     closeClosestSearchDialog();
     setStatus(`Selected ${barcode}`);
     if (state.isQuantityEntryUnlocked) {
-      moveFocusToInput(state.els.quantityInput);
-      selectEntireInputValue({ target: state.els.quantityInput });
+      openQuantityCapture(barcode);
     }
   } catch (error) {
     state.els.closestSearchStatus.textContent = error.message || "Could not load selected product.";

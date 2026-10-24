@@ -417,11 +417,22 @@ function clearSelectedHistory() {
 
 
 function clearAllHistory() {
+  if (!state.history.length) return;
+  if (!recordSentPrintRequest("LIST", state.history, false, "")) {
+    setStatus("Could not save a copy. The list has not been cleared.");
+    showToast("List kept: could not save a copy");
+    return;
+  }
+  try {
+    localStorage.setItem(CONFIG.historyStorageKey, "[]");
+  } catch (_) {
+    setStatus("A copy was saved, but the current list could not be cleared.");
+    return;
+  }
   state.history = [];
   state.selectedHistoryIndex = -1;
-  saveHistoryState();
   renderHistory();
-  setStatus("Barcode list cleared");
+  setStatus("List saved in Recent print requests and cleared");
 }
 
 
@@ -439,16 +450,20 @@ function fillHistoryEditForm(item) {
 
 
 function openHistoryEditDialog(item) {
+  state.historyEditGeneration += 1;
+  state.historyEditDirty = false;
   fillHistoryEditForm(item);
   clearHistoryEditFeedbackTimers();
   clearHistoryEditSaveNote();
   lockPageScroll();
   state.els.historyEditDialog.classList.add("is-open");
   state.els.historyEditDialog.setAttribute("aria-hidden", "false");
+  state.els.historyEditPPriceInput.focus({ preventScroll: true });
 }
 
 
 function closeHistoryEditDialog() {
+  state.historyEditGeneration += 1;
   const activeElement = document.activeElement;
   if (activeElement instanceof HTMLElement && state.els.historyEditDialog.contains(activeElement)) {
     activeElement.blur();
@@ -650,6 +665,21 @@ function refreshHistoryEditDiscountPrice() {
     state.els.historyEditSDiscountInput.value
   );
   state.els.historyEditDiscountPriceInput.value = discountPrice;
+  state.els.historyEditDiscountPriceInput.setCustomValidity("");
+}
+
+
+function refreshHistoryEditDiscountPercent() {
+  const input = state.els.historyEditDiscountPriceInput;
+  const raw = normalizeDecimalInput(input.value);
+  const price = numberFromValue(state.els.historyEditSPriceInput.value);
+  const discounted = Number(raw);
+  if (raw === "" || !Number.isFinite(discounted) || discounted < 0 || discounted > price) {
+    input.setCustomValidity("Discounted price must be between 0 and the price.");
+    return;
+  }
+  input.setCustomValidity("");
+  state.els.historyEditSDiscountInput.value = String(price > 0 ? Math.round((1 - discounted / price) * 100000000) / 1000000 : 0);
 }
 
 
@@ -696,6 +726,7 @@ async function openHistoryEditor(index) {
   state.editingHistoryId = item.id;
   selectHistoryItem(index);
   openHistoryEditDialog(item);
+  const generation = state.historyEditGeneration;
   state.els.historyEditSaveNote.textContent = "Loading latest info...";
 
   try {
@@ -715,16 +746,21 @@ async function openHistoryEditor(index) {
     syncHistoryRowsWithRecord(updatedItem, item.barcode);
     const refreshedSelectedItem =
       state.history.find((historyItem) => historyItem.id === item.id) || updatedItem;
-    fillHistoryEditForm(refreshedSelectedItem);
-    state.els.historyEditSaveNote.textContent = "";
-    setStatus(`Latest info loaded for ${updatedItem.barcode}`);
+    if (generation === state.historyEditGeneration && state.editingHistoryId === item.id) {
+      if (!state.historyEditDirty) fillHistoryEditForm(refreshedSelectedItem);
+      state.els.historyEditSaveNote.textContent = state.historyEditDirty ? "Latest info loaded. Your edits were kept." : "";
+      setStatus(`Latest info loaded for ${updatedItem.barcode}`);
+    }
   } catch (error) {
-    state.els.historyEditSaveNote.textContent = error.message || "Could not refresh item info.";
+    if (generation === state.historyEditGeneration && state.editingHistoryId === item.id) {
+      state.els.historyEditSaveNote.textContent = error.message || "Could not refresh item info.";
+    }
   }
 }
 
 
 async function saveHistoryEditorChanges() {
+  if (!state.els.historyEditDiscountPriceInput.reportValidity()) return;
   if (!state.editingHistoryId) {
     throw new Error("No barcode row selected");
   }

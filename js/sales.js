@@ -250,7 +250,7 @@ function restoreSalesPeriodFromSavedRequest() {
 
 
 function isSalesTabActive(index) {
-  if (state.productInfoSlideIndex !== index || state.isQuantityEntryUnlocked ||
+  if (state.productInfoSlideIndex !== index ||
       state.els?.productInfoSection?.hidden ||
       (typeof document !== "undefined" && document.hidden)) return false;
   const slider = state.els?.productInfoSlider;

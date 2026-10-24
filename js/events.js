@@ -21,8 +21,7 @@ function bindCriticalEvents() {
         persistToHistory: !state.isQuantityEntryUnlocked
       });
       if (state.isQuantityEntryUnlocked && lookupResult === "exact") {
-        moveFocusToInput(state.els.quantityInput);
-        selectEntireInputValue({ target: state.els.quantityInput });
+        openQuantityCapture(state.els.barcodeInput.value);
       }
     } finally {
       state.els.searchBarcodeBtn.disabled = false;
@@ -55,13 +54,7 @@ function bindCriticalEvents() {
         setStatus("Type or scan a barcode first");
         return;
       }
-      await handleBarcodeLookup({
-        allowClosestSearch: false,
-        addToHistoryBeforeLookup: false,
-        persistToHistory: false
-      });
-      moveFocusToInput(state.els.quantityInput);
-      selectEntireInputValue({ target: state.els.quantityInput });
+      openQuantityCapture(state.els.barcodeInput.value);
       return;
     }
 
@@ -110,7 +103,7 @@ function bindDeferredEvents() {
     if (state.history.length === 0) {
       return;
     }
-    openConfirmDialog("Delete all barcodes from the list?", clearAllHistory);
+    openConfirmDialog("Save a copy in Recent print requests, then clear all records from the list?", clearAllHistory);
   });
   
   state.els.sendTxtBtn.addEventListener("click", async function () {
@@ -249,29 +242,28 @@ function bindDeferredEvents() {
     setQuantityEntryMode(!state.isQuantityEntryUnlocked);
   });
 
-  if (!state.isIOS) {
-    state.els.quantityInput.addEventListener("focus", selectEntireInputValue);
-    state.els.quantityInput.addEventListener("click", selectEntireInputValue);
-    state.els.quantityInput.addEventListener("pointerup", function (event) {
-      event.preventDefault();
-      selectEntireInputValue(event);
-    });
-  }
-  
-  state.els.quantityInput.addEventListener("input", function () {
-    state.els.quantityInput.value = sanitizeEditableQuantity(state.els.quantityInput.value);
-  });
-  
-  state.els.quantityInput.addEventListener("keydown", async function (event) {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    await addCurrentBarcodeWithQuantity();
-    moveFocusToInput(state.els.barcodeInput);
-  });
-  
-  state.els.addBarcodeBtn.addEventListener("click", async function () {
-    await addCurrentBarcodeWithQuantity();
-    moveFocusToInput(state.els.barcodeInput);
+  state.els.quantityCancelBtn.addEventListener("click", cancelQuantityCapture);
+  state.els.quantityPadCard.addEventListener("keydown", function (event) {
+    if (!state.quantityCaptureOpen || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key === "Tab") {
+      const buttons = Array.from(state.els.quantityPadCard.querySelectorAll("button:not(:disabled)"));
+      const first = buttons[0], last = buttons[buttons.length - 1];
+      if (event.shiftKey && document.activeElement === first || !event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus({ preventScroll: true });
+      }
+      event.stopPropagation();
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault(); event.stopPropagation(); cancelQuantityCapture(); return;
+    }
+    const key = /^\d$/.test(event.key) ? event.key : event.key === "Enter" ? "enter" :
+      event.key === "Backspace" || event.key === "Delete" ? "backspace" : event.key.toLowerCase() === "c" ? "clear" : "";
+    if (!key) return;
+    event.preventDefault(); event.stopPropagation();
+    if (event.key === "Enter" && event.target === state.els.quantityCancelBtn) cancelQuantityCapture();
+    else handleQuantityPadInput(key).catch(error => setStatus(error.message || "Could not add barcode"));
   });
   
   state.els.quantityPad.addEventListener("click", async function (event) {
@@ -283,11 +275,8 @@ function bindDeferredEvents() {
     if (!key) {
       return;
     }
-    await handleQuantityPadInput(key);
-    
-    if (key.toLowerCase() === "enter" || key.toLowerCase() === "add") {
-      moveFocusToInput(state.els.barcodeInput);
-    }
+    try { await handleQuantityPadInput(key); }
+    catch (error) { setStatus(error.message || "Could not add barcode"); }
   });
 
   state.els.cameraSelect.addEventListener("change", async function () {
@@ -478,26 +467,43 @@ function bindDeferredEvents() {
   });
 
   state.els.historyEditSPriceInput.addEventListener("input", refreshHistoryEditDiscountPrice);
+  state.els.historyEditDialog.addEventListener("input", function () { state.historyEditDirty = true; });
   state.els.historyEditSDiscountInput.addEventListener("input", refreshHistoryEditDiscountPrice);
+  state.els.historyEditDiscountPriceInput.addEventListener("input", refreshHistoryEditDiscountPercent);
   if (!state.isIOS) {
-    state.els.historyEditQtyInput.addEventListener("focus", selectEntireInputValue);
-    state.els.historyEditQtyInput.addEventListener("click", selectEntireInputValue);
+    const selectQuantity = function () {
+      try { state.els.historyEditQtyInput.select(); } catch (_) {}
+    };
+    state.els.historyEditQtyInput.addEventListener("focus", selectQuantity);
+    state.els.historyEditQtyInput.addEventListener("click", selectQuantity);
     state.els.historyEditQtyInput.addEventListener("pointerup", function (event) {
       event.preventDefault();
-      selectEntireInputValue(event);
+      selectQuantity();
     });
   }
 
-  state.els.historyEditItalianNameInput.addEventListener("keydown", function (event) {
-    if (event.key !== "Enter") return;
+  state.els.historyEditDialog.addEventListener("keydown", function (event) {
+    const fields = [state.els.historyEditPPriceInput, state.els.historyEditItalianNameInput,
+      state.els.historyEditSPriceInput, state.els.historyEditSDiscountInput,
+      state.els.historyEditDiscountPriceInput, state.els.historyEditQtyInput];
+    if (event.key === "Escape") {
+      event.preventDefault(); closeHistoryEditDialog(); return;
+    }
+    if (event.key === "Tab") {
+      // Mobile browsers may otherwise skip text fields when a hardware Tab
+      // key is used. Follow the visual order explicitly on every platform.
+      const sequence = [...fields, state.els.historyEditSaveBtn, state.els.historyEditBackBtn].filter(field => !field.disabled);
+      const index = sequence.indexOf(document.activeElement);
+      const next = sequence[(index + (event.shiftKey ? -1 : 1) + sequence.length) % sequence.length];
+      event.preventDefault();
+      next.focus({ preventScroll: true });
+      return;
+    }
+    const index = fields.indexOf(event.target);
+    if (event.key !== "Enter" || event.isComposing || index < 0) return;
     event.preventDefault();
-    moveFocusToInput(state.els.historyEditPPriceInput);
-  });
-
-  state.els.historyEditPPriceInput.addEventListener("keydown", function (event) {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    moveFocusToInput(state.els.historyEditSPriceInput);
+    const next = fields[index + (event.shiftKey ? -1 : 1)] || (event.shiftKey ? fields[0] : state.els.historyEditSaveBtn);
+    next.focus({ preventScroll: true });
   });
 
   state.els.historyEditDialog.addEventListener("click", function (event) {
@@ -549,12 +555,12 @@ function bindDeferredEvents() {
     if (document.hidden) {
       // Release even the camera retained behind the product screen.
       releaseCaptureHardware();
-    } else if (state.capturePageOpen && captureEngineLoaded) {
+    } else if (state.capturePageOpen && !state.quantityCaptureOpen && captureEngineLoaded) {
       scheduleQuickPreviewResumeCheck();
     }
   });
   window.addEventListener("focus", function () {
-    if (state.capturePageOpen && captureEngineLoaded) scheduleQuickPreviewResumeCheck();
+    if (state.capturePageOpen && !state.quantityCaptureOpen && captureEngineLoaded) scheduleQuickPreviewResumeCheck();
   });
   if (navigator.mediaDevices?.addEventListener) {
     navigator.mediaDevices.addEventListener("devicechange", function () {

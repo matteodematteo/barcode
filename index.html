@@ -4,16 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f5f6f2" />
-  <meta name="webscanner-version" content="149" />
+  <meta name="webscanner-version" content="151" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Web Scanner" />
-  <link rel="manifest" href="manifest.webmanifest?v=149" />
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=149" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=149" />
+  <link rel="manifest" href="manifest.webmanifest?v=151" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=151" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=151" />
   <title>Web Barcode Scanner</title>
-  <link rel="preload" href="js/app.bundle.js?v=149" as="script" />
-  <link rel="preload" href="css/interface.bundle.css?v=149" as="style" />
+  <link rel="preload" href="js/app.bundle.js?v=151" as="script" />
+  <link rel="preload" href="css/interface.bundle.css?v=151" as="style" />
   <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
        round-trips for the above-the-fold shell (base + scanner + layout +
        essential components). The remaining interface styles load as one small sheet below. -->
@@ -344,13 +344,13 @@
   <!-- These sheets affect the visible page geometry. Keep them render-blocking so
        browsers paint the completed interface once instead of restyling sections
        progressively on a slow connection. -->
-  <link rel="stylesheet" href="css/interface.bundle.css?v=149" />
+  <link rel="stylesheet" href="css/interface.bundle.css?v=151" />
 </head>
 <body>
   <main class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=149" width="34" height="34" alt="" decoding="async" /></span>
+        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=151" width="34" height="34" alt="" decoding="async" /></span>
         <div><h1>Web Scanner</h1></div>
       </div>
       <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
@@ -383,21 +383,6 @@
         </div>
       </div>
 
-      <div class="helper-row">
-        <div class="manual-entry-group">
-          <button class="btn btn-muted manual-entry-lock" id="entryModeBtn" type="button" aria-label="Locked barcode entry" title="Locked barcode entry">
-            <svg id="entryModeIcon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="5" y="11" width="14" height="10" rx="2"></rect>
-              <path d="M8 11V8a4 4 0 1 1 8 0v3"></path>
-            </svg>
-          </button>
-          <input class="input manual-entry-qty" id="quantityInput" type="number" inputmode="none" min="1" step="1" value="" placeholder="Qty" aria-label="Quantity" readonly disabled />
-          <button class="btn btn-primary manual-entry-add" id="addBarcodeBtn" type="button" hidden tabindex="-1" aria-hidden="true" disabled>Add</button>
-        </div>
-        <div class="scan-actions">
-          <button class="btn btn-primary" id="scanBtn" type="button" data-mode="start">Capture barcode</button>
-        </div>
-      </div>
       <div class="status-row">
         <span class="status-dot" aria-hidden="true"></span>
         <div id="statusText" role="status">Ready to capture</div>
@@ -475,23 +460,7 @@
       </div>
     </section>
 
-    <section class="card section-card qty-pad-card" id="quantityPadCard" aria-label="Quantity keypad" hidden>
-      <div class="qty-pad-grid" id="quantityPad">
-        <button class="qty-pad-key" type="button" data-key="1">1</button>
-        <button class="qty-pad-key" type="button" data-key="2">2</button>
-        <button class="qty-pad-key" type="button" data-key="3">3</button>
-        <button class="qty-pad-key" type="button" data-key="4">4</button>
-        <button class="qty-pad-key" type="button" data-key="5">5</button>
-        <button class="qty-pad-key" type="button" data-key="6">6</button>
-        <button class="qty-pad-key" type="button" data-key="7">7</button>
-        <button class="qty-pad-key" type="button" data-key="8">8</button>
-        <button class="qty-pad-key" type="button" data-key="9">9</button>
-        <button class="qty-pad-key" type="button" data-key="clear" aria-label="Clear quantity">C</button>
-        <button class="qty-pad-key" type="button" data-key="0">0</button>
-        <button class="qty-pad-key" type="button" data-key="backspace" aria-label="Delete last digit" title="Delete last digit"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5h11a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H9l-7-7 7-7Z"/><path d="m12 9 6 6m0-6-6 6"/></svg></button>
-        <button class="qty-pad-key" type="button" data-key="enter">Enter / Add</button>
-      </div>
-    </section>
+
 
     <section class="card section-card">
       <div class="history-head">
@@ -508,6 +477,16 @@
         <p class="history-empty" id="historyEmpty">No scans yet.</p>
       </div>
     </section>
+
+    <nav class="capture-actions" aria-label="Capture controls">
+      <button class="btn btn-primary" id="scanBtn" type="button" data-mode="start">Capture barcode</button>
+      <button class="btn btn-muted manual-entry-lock" id="entryModeBtn" type="button" aria-label="Locked barcode entry" title="Locked barcode entry">
+            <svg id="entryModeIcon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="5" y="11" width="14" height="10" rx="2"></rect>
+              <path d="M8 11V8a4 4 0 1 1 8 0v3"></path>
+            </svg>
+          </button>
+    </nav>
   </main>
 
   <section id="capturePage" class="capture-page" role="dialog" aria-modal="true" aria-labelledby="captureTitle" hidden>
@@ -564,6 +543,30 @@
   
 
   
+
+  <div class="dialog-backdrop quantity-capture-dialog" id="quantityPadCard" aria-hidden="true" hidden>
+    <div class="dialog-card quantity-capture-card" role="dialog" aria-modal="true" aria-labelledby="quantityTitle" aria-describedby="quantityBarcode">
+      <div class="quantity-capture-heading"><h2 id="quantityTitle">Choose quantity</h2><button class="btn btn-muted" id="quantityCancelBtn" type="button">Cancel</button></div>
+      <p id="quantityBarcode" class="quantity-barcode"></p>
+      <input class="input quantity-display" id="quantityInput" type="text" inputmode="none" value="1" aria-label="Selected quantity" readonly tabindex="-1" />
+      <div class="qty-pad-grid" id="quantityPad">
+        <button class="qty-pad-key" type="button" data-key="1">1</button>
+        <button class="qty-pad-key" type="button" data-key="2">2</button>
+        <button class="qty-pad-key" type="button" data-key="3">3</button>
+        <button class="qty-pad-key" type="button" data-key="4">4</button>
+        <button class="qty-pad-key" type="button" data-key="5">5</button>
+        <button class="qty-pad-key" type="button" data-key="6">6</button>
+        <button class="qty-pad-key" type="button" data-key="7">7</button>
+        <button class="qty-pad-key" type="button" data-key="8">8</button>
+        <button class="qty-pad-key" type="button" data-key="9">9</button>
+        <button class="qty-pad-key" type="button" data-key="clear" aria-label="Clear quantity">C</button>
+        <button class="qty-pad-key" type="button" data-key="0">0</button>
+        <button class="qty-pad-key" type="button" data-key="backspace" aria-label="Delete last digit" title="Delete last digit"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5h11a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H9l-7-7 7-7Z"/><path d="m12 9 6 6m0-6-6 6"/></svg></button>
+        <button class="qty-pad-key" type="button" data-key="enter">Enter / Add</button>
+      </div>
+      <p id="quantityStatus" class="quantity-status" role="status"></p>
+    </div>
+  </div>
 
   <div class="dialog-backdrop" id="settingsDialog" aria-hidden="true">
     <div class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="settingsDialogTitle">
@@ -702,19 +705,16 @@
 
   <div class="dialog-backdrop" id="historyEditDialog" aria-hidden="true">
     <div class="dialog-card detail-popup-card" role="dialog" aria-modal="true" aria-label="Edit Barcode">
-      <label class="visually-hidden">
-        <span>ID</span>
-        <input class="input" id="historyEditIdInput" type="text" readonly />
-      </label>
+      <input id="historyEditIdInput" type="hidden" />
       <div class="detail-popup-grid">
         <div class="detail-popup-row detail-popup-row--60-40">
           <label class="detail-popup-field">
             <span>Barcode</span>
-            <input class="input" id="historyEditBarcodeInput" type="text" readonly />
+            <input class="input" id="historyEditBarcodeInput" type="text" readonly tabindex="-1" />
           </label>
           <label class="detail-popup-field">
-            <span>Quantity</span>
-            <input class="input" id="historyEditQtyInput" type="number" min="1" step="1" />
+            <span>Cost</span>
+            <input class="input" id="historyEditPPriceInput" type="text" inputmode="decimal" />
           </label>
         </div>
         <label class="detail-popup-field">
@@ -723,22 +723,22 @@
         </label>
         <div class="detail-popup-row detail-popup-row--half">
           <label class="detail-popup-field">
-            <span>Cost</span>
-            <input class="input" id="historyEditPPriceInput" type="text" inputmode="decimal" />
-          </label>
-          <label class="detail-popup-field">
             <span>Price</span>
             <input class="input" id="historyEditSPriceInput" type="text" inputmode="decimal" />
           </label>
-        </div>
-        <div class="detail-popup-row detail-popup-row--half">
           <label class="detail-popup-field">
             <span>Discount%</span>
             <input class="input" id="historyEditSDiscountInput" type="text" inputmode="decimal" />
           </label>
+        </div>
+        <div class="detail-popup-row detail-popup-row--half">
           <label class="detail-popup-field">
-            <span>Disc. Price</span>
-            <input class="input" id="historyEditDiscountPriceInput" type="text" inputmode="decimal" readonly />
+            <span>Discounted Price</span>
+            <input class="input" id="historyEditDiscountPriceInput" type="text" inputmode="decimal" />
+          </label>
+          <label class="detail-popup-field">
+            <span>Quantity</span>
+            <input class="input" id="historyEditQtyInput" type="number" min="1" step="1" />
           </label>
         </div>
         <div class="detail-popup-actions">
@@ -755,6 +755,6 @@
     <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
   </div>
   <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
-  <script src="js/app.bundle.js?v=149" defer></script>
+  <script src="js/app.bundle.js?v=151" defer></script>
 </body>
 </html>

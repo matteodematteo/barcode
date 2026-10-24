@@ -75,7 +75,7 @@ function loadCaptureEngine() {
   if (captureEnginePromise) return captureEnginePromise;
   captureEnginePromise = new Promise(function (resolve, reject) {
     const script = document.createElement("script");
-    script.src = "js/capture.bundle.js?v=149";
+    script.src = "js/capture.bundle.js?v=151";
     script.onload = function () {
       captureEngineLoaded = true;
       initPreviewFocus();
@@ -135,6 +135,7 @@ async function openCapturePage() {
 
 function closeCapturePage(options) {
   if (!state.capturePageOpen) return;
+  if (state.quantityCaptureOpen) closeQuantityCapture();
   state.capturePageOpen = false;
   state.captureGeneration += 1;
   if (options?.captured && !document.hidden && state.track?.readyState === "live") {
@@ -183,13 +184,13 @@ function initCapturePage() {
     releaseCaptureHardware();
   });
   document.addEventListener("keydown", function (event) {
-    if (!state.capturePageOpen) return;
+    if (!state.capturePageOpen || state.quantityCaptureOpen) return;
     if (event.key === "Escape") {
       event.preventDefault();
       closeCapturePage();
     } else if (event.key === "Tab") {
       const buttons = Array.from(state.els.capturePage.querySelectorAll("button:not(:disabled)"))
-        .filter(function (button) { return !button.hidden; });
+        .filter(function (button) { return !button.hidden && button.getClientRects().length; });
       const first = buttons[0], last = buttons[buttons.length - 1];
       if (event.shiftKey && document.activeElement === first) {
         event.preventDefault(); last.focus();

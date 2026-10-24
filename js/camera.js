@@ -492,20 +492,14 @@ async function handleDetectedCode(detectedText) {
   updateQuantityPadAvailability();
   playCaptureSound();
   stopScanning(true);
+  if (state.isQuantityEntryUnlocked) {
+    openQuantityCapture(code);
+    return;
+  }
   closeCapturePage({ captured: true });
   setStatus("Barcode captured");
 
   try {
-    if (state.isQuantityEntryUnlocked) {
-      await fetchProductInfo(code, {
-        allowClosestSearch: false,
-        addToHistoryBeforeLookup: false,
-        persistToHistory: false
-      });
-      state.els.quantityInput.value = sanitizeEditableQuantity(state.els.quantityInput.value);
-
-      return;
-    }
     await fetchProductInfo(code);
   } catch (error) {
     state.lastDetectedBarcode = "";

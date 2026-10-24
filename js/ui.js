@@ -82,7 +82,7 @@ function playCaptureSound() {
 function isAnyDialogOpen() {
   const els = state.els;
   return Boolean(
-    state.capturePageOpen ||
+    state.capturePageOpen || state.quantityCaptureOpen ||
     els?.settingsDialog?.classList.contains("is-open") ||
     els?.confirmDialog?.classList.contains("is-open") ||
     els?.printDialog?.classList.contains("is-open") ||
@@ -156,7 +156,7 @@ function isInsideScrollableWhileLocked(target) {
     return false;
   }
   return Boolean(target.closest(
-    ".is-locked-scroll, .closest-search-results, #salesPeriodDialog .dialog-card, #closestSearchDialog .dialog-card, #historyEditDialog .dialog-card, #printDialog .dialog-card, #printRequestDetailDialog .dialog-card, .pi-slider"
+    ".is-locked-scroll, .closest-search-results, #salesPeriodDialog .dialog-card, #closestSearchDialog .dialog-card, #historyEditDialog .dialog-card, #printDialog .dialog-card, #printRequestDetailDialog .dialog-card, #quantityPadCard .dialog-card, .pi-slider"
   ));
 }
 
