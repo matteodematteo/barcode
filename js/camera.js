@@ -116,6 +116,15 @@ function cleanupScanTimer() {
 
 
 function clearFocusRefreshTimers() {
+  const focus = state.track && cameraFocusStates.get(state.track);
+  if (focus) {
+    window.clearTimeout(focus.restoreTimer);
+    focus.manualRequest += 1;
+    focus.manualUntil = 0;
+  }
+  if (state.els?.focusTarget) state.els.focusTarget.hidden = true;
+  window.clearTimeout(previewFocusFeedbackTimer);
+  if (state.els?.focusHint) state.els.focusHint.textContent = "Tap preview to focus";
   if (!Array.isArray(state.focusRefreshTimers)) {
     state.focusRefreshTimers = [];
     return;
@@ -1053,6 +1062,7 @@ function applyCameraTrackConstraints(track, changes, session) {
 const cameraBarcodeAssist = new WeakMap();
 function assistSmallBarcode(region, frame, session) {
   const track = state.track;
+  if (Date.now() < (cameraFocusStates.get(track)?.manualUntil || 0)) return;
   if (session !== state.scanSession || !state.isScanning || !state.capturePageOpen ||
       !isCurrentCameraTrack(track) || !track.getCapabilities || !track.applyConstraints) return;
   if (![region?.x, region?.y, region?.width, region?.height].every(Number.isFinite) ||
@@ -1093,30 +1103,44 @@ function assistSmallBarcode(region, frame, session) {
 
 
 async function requestFocusRefresh(track, options = {}) {
-  if (!isCurrentCameraTrack(track) || !track.getCapabilities || !track.applyConstraints) return false;
+  if (!state.capturePageOpen || !isCurrentCameraTrack(track) || !track.getCapabilities || !track.applyConstraints) return false;
   let focus = cameraFocusStates.get(track);
   if (!focus) {
-    focus = { mode: "", pending: null, updatedAt: 0, lastForcedAt: -Infinity, pointRejected: false };
+    focus = { mode: "", pending: null, updatedAt: 0, lastForcedAt: -Infinity,
+      pointRejected: false, manualRequest: 0, manualUntil: 0, restoreTimer: 0 };
     cameraFocusStates.set(track, focus);
   }
-  if (focus.pending) return focus.pending;
+  const session = options.session ?? state.scanSession;
+  const manualRequest = options.manual ? ++focus.manualRequest : focus.manualRequest;
+  if (options.manual) {
+    focus.manualUntil = Date.now() + 3000;
+    window.clearTimeout(focus.restoreTimer);
+  } else if (Date.now() < focus.manualUntil) return false;
+  // A tap must wait for startup/torch work, rather than being discarded.
+  // When several taps arrive, only the latest waiting target is applied.
+  while (focus.pending) {
+    await focus.pending;
+    if (!options.manual) return false;
+    if (manualRequest !== focus.manualRequest) return false;
+  }
+  if (!state.capturePageOpen || !isCurrentCameraTrack(track) || session !== state.scanSession) return false;
 
   try {
     // Capability detection also covers iPhones if their browser exposes focus.
     // Otherwise native autofocus continues without sending camera constraints.
     const modes = track.getCapabilities().focusMode || [];
-    const mode = modes.includes("continuous") ? "continuous" :
+    const mode = options.manual && modes.includes("single-shot") ? "single-shot" :
+      modes.includes("continuous") ? "continuous" :
       modes.includes("single-shot") ? "single-shot" : "";
     if (!mode) return false;
     const settings = track.getSettings?.() || {};
     const now = Date.now();
-    // A new scan means the user is aiming at a new object, usually at a
-    // different distance. Re-kick autofocus (continuous included) so the
-    // next barcode starts sharp instead of waiting out the 1-2s hunt.
-    const force = options.force || (options.newScan && now - focus.updatedAt >= 1500);
+    // New scans restore continuous autofocus and center metering. Explicit
+    // taps request a single sweep where available, even during the cooldown.
+    const force = options.manual || options.force || (options.newScan && now - focus.updatedAt >= 1500);
     if (!force && (mode === "continuous" && settings.focusMode === mode ||
         focus.mode === mode && (!settings.focusMode || settings.focusMode === mode))) return true;
-    if (force && now - focus.lastForcedAt < 700) return false;
+    if (force && !options.manual && now - focus.lastForcedAt < 700) return false;
     if (force) focus.lastForcedAt = now;
 
     let point;
@@ -1136,18 +1160,33 @@ async function requestFocusRefresh(track, options = {}) {
     focus.pending = (async function () {
       let applied;
       try {
-        applied = await applyCameraTrackConstraints(track, changes, options.session);
+        applied = await applyCameraTrackConstraints(track, changes, session);
       } catch (error) {
         if (!point || !isCurrentCameraTrack(track)) throw error;
         // Some browsers recognize pointsOfInterest but the camera rejects it.
         focus.pointRejected = true;
-        applied = await applyCameraTrackConstraints(track, { focusMode: mode }, options.session);
+        applied = await applyCameraTrackConstraints(track, { focusMode: mode }, session);
       }
       if (!applied) return false;
       const actualMode = track.getSettings?.().focusMode;
       if (actualMode && actualMode !== mode) return false;
       focus.mode = mode;
       focus.updatedAt = Date.now();
+      if (options.manual && manualRequest === focus.manualRequest) {
+        // The API acknowledges a request; it does not report lens convergence.
+        setPreviewFocusFeedback(point && !focus.pointRejected ? "Focus requested" : "Autofocus refreshed · point focus unavailable");
+        // Resume tracking distance changes after the one-shot lens sweep.
+        // Preserve the chosen point until the user starts another capture.
+        if (mode === "single-shot" && modes.includes("continuous")) {
+          focus.restoreTimer = window.setTimeout(async function () {
+            if (!state.capturePageOpen || !isCurrentCameraTrack(track) || session !== state.scanSession ||
+                manualRequest !== focus.manualRequest) return;
+            try {
+              if (await applyCameraTrackConstraints(track, { focusMode: "continuous" }, session)) focus.mode = "continuous";
+            } catch (_) { /* Leave working one-shot focus available for another tap. */ }
+          }, 1200);
+        }
+      }
       return true;
     }()).catch(() => false);
     return await focus.pending;
@@ -1170,7 +1209,7 @@ function scheduleFocusRefresh(track, options = {}) {
   for (const delay of [350, 1000]) {
     const timerId = window.setTimeout(function () {
       if (!ready && isCurrentCameraTrack(track)) {
-        requestFocusRefresh(track).then((result) => { ready = result; });
+        requestFocusRefresh(track, options).then((result) => { ready = result; });
       }
     }, delay);
     state.focusRefreshTimers.push(timerId);
@@ -1182,6 +1221,7 @@ function getPreviewFocusPoint(clientX, clientY) {
   const video = state.els.cameraPreview;
   const rect = video.getBoundingClientRect();
   if (!rect.width || !rect.height || !video.videoWidth || !video.videoHeight) return null;
+  if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return null;
   const cover = getCoverSourceRect(video.videoWidth, video.videoHeight, rect.width, rect.height);
   const x = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
   const y = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
@@ -1190,9 +1230,23 @@ function getPreviewFocusPoint(clientX, clientY) {
 }
 
 
+let previewFocusFeedbackTimer = 0;
+function setPreviewFocusFeedback(message) {
+  const hint = state.els.focusHint;
+  if (!hint) return;
+  window.clearTimeout(previewFocusFeedbackTimer);
+  hint.textContent = message;
+  previewFocusFeedbackTimer = window.setTimeout(function () {
+    if (state.els.focusTarget) state.els.focusTarget.hidden = true;
+    hint.textContent = "Tap preview to focus";
+  }, 2200);
+}
+
+
 function initPreviewFocus() {
   const preview = state.els.previewFrame;
   let tap = null;
+  let focusTap = 0;
   preview.addEventListener("pointerdown", function (event) {
     tap = null;
     if (!event.isPrimary || event.button !== 0 || event.target.closest("button")) return;
@@ -1207,9 +1261,25 @@ function initPreviewFocus() {
     tap = null;
     if (!start || start.id !== event.pointerId || Date.now() - start.time > 500 ||
         Math.hypot(event.clientX - start.x, event.clientY - start.y) > 12 ||
-        !state.isCameraRunning) return;
+        !state.capturePageOpen || !state.isCameraRunning) return;
     const point = getPreviewFocusPoint(event.clientX, event.clientY);
-    if (point) requestFocusRefresh(state.track, { force: true, point });
+    if (!point) return;
+    const rect = preview.getBoundingClientRect();
+    const target = state.els.focusTarget;
+    if (target) {
+      target.style.left = `${event.clientX - rect.left}px`;
+      target.style.top = `${event.clientY - rect.top}px`;
+      target.hidden = false;
+    }
+    setPreviewFocusFeedback("Focusing…");
+    const currentTap = ++focusTap;
+    const track = state.track, session = state.scanSession;
+    requestFocusRefresh(track, { manual: true, point, session }).then(function (applied) {
+      if (!applied && currentTap === focusTap && state.capturePageOpen && isCurrentCameraTrack(track) && session === state.scanSession &&
+          state.els.focusHint?.textContent === "Focusing…" && !cameraFocusStates.get(track)?.pending) {
+        setPreviewFocusFeedback("Point focus unavailable · use camera autofocus");
+      }
+    });
   }, { passive: true });
 }
 
@@ -1376,6 +1446,9 @@ async function startScanning() {
   if (!state.capturePageOpen || generation !== state.captureGeneration || document.hidden || state.isScanning) return;
 
   const session = ++state.scanSession;
+  // Start lens control as soon as playback is ready, even if the decoder is
+  // still loading. Previously this could leave the preview blurry for seconds.
+  scheduleFocusRefresh(state.track, { newScan: true, session });
   setStatus("Loading scanner…");
   try {
     const error = await detectorReady;
@@ -1388,7 +1461,6 @@ async function startScanning() {
 
   resetBarcodeTracking();
   state.lastBarcodeRegion = null;
-  scheduleFocusRefresh(state.track, { newScan: true });
   state.detectionAttempt = 0;
   state.lastDetectionPass = null;
   state.lastScanFrame = null;

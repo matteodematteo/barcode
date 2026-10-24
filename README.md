@@ -48,6 +48,16 @@ The initial request prefers 1920×1080 with no forced aspect ratio or software
 resize mode. There is no resolution switch during scanning. Custom focus
 constraints run after playback begins and preserve the requested resolution. Pointer/focus
 on Capture also warms the decoder without opening hardware.
+
+The camera requests continuous autofocus when available and configures the lens
+as soon as playback starts, without waiting for the decoder. Tap or click the
+preview to select a focus point; a yellow target marks the selected location.
+Taps take priority over automatic barcode assistance and use a single autofocus
+sweep on cameras that offer it, then resume continuous autofocus. The app maps
+the selected point through the preview crop and preserves resolution and torch
+settings. The hint reports when point focus is unavailable on a browser or lens.
+"Focus requested" acknowledges the camera command; the browser cannot confirm
+that the physical image is sharp.
 The decoder runs in a worker and transfers pixel buffers without
 blocking the interface. The worker and live camera stay ready for subsequent
 captures while the app remains visible. Saved
@@ -96,6 +106,18 @@ Capture, typing, closest-match selection, clearing, submission, and update-draft
 restoration refresh that state without adding camera or network startup work.
 
 ## Browser checks
+
+Focus regressions can be checked without hardware:
+
+```powershell
+node tests/test_focus.cjs
+```
+
+With Playwright installed (`npm install --no-save playwright`) and Microsoft
+Edge available, run `node tests/test_focus_browser.cjs`. It starts its own local
+server and checks the deployed bundles with fake video and simulated lens
+controls, including decoder delays, rapid taps, unsupported controls, camera
+reuse, and cancellation. Physical autofocus still requires testing on a phone.
 
 With the local server running, install the optional test dependency and run:
 

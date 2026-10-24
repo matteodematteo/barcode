@@ -132,3 +132,37 @@ body.is-capturing { overflow: hidden; }
 .capture-page { height: 100vh; height: 100dvh; }
 
 .brand-icon img { display: block; width: 100%; height: 100%; object-fit: contain; border-radius: inherit; }
+
+/* Tap-to-focus feedback above the live camera preview. */
+.focus-target {
+    position: absolute;
+    z-index: 5;
+    width: 64px;
+    height: 64px;
+    border: 2px solid #ffe08a;
+    border-radius: 12px;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .4);
+    pointer-events: none;
+  }
+
+  .focus-target[hidden] { display: none; }
+
+  .focus-hint {
+    position: absolute;
+    z-index: 5;
+    bottom: 14px;
+    left: 12px;
+    right: 12px;
+    width: fit-content;
+    margin: 0 auto;
+    padding: 6px 10px;
+    border-radius: 12px;
+    background: rgba(0, 0, 0, .65);
+    color: #fff;
+    font-size: 12px;
+    line-height: 1.4;
+    text-align: center;
+    pointer-events: none;
+  }
+

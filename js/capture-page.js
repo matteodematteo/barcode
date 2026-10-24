@@ -14,6 +14,11 @@ function requestCaptureStream(deviceId) {
   const request = { generation: state.captureGeneration, stream: null, playback: null, promise: null };
   state.captureRequest = request;
   const video = { ...CONFIG.cameraStartupVideo };
+  if (navigator.mediaDevices?.getSupportedConstraints?.().focusMode) {
+    // Prefer autofocus in the first hardware request. An ideal constraint
+    // keeps fixed-focus cameras and browsers without lens controls usable.
+    video.focusMode = { ideal: "continuous" };
+  }
   if (deviceId) {
     delete video.facingMode;
     video.deviceId = { exact: deviceId };
@@ -70,7 +75,7 @@ function loadCaptureEngine() {
   if (captureEnginePromise) return captureEnginePromise;
   captureEnginePromise = new Promise(function (resolve, reject) {
     const script = document.createElement("script");
-    script.src = "js/capture.bundle.js?v=147";
+    script.src = "js/capture.bundle.js?v=148";
     script.onload = function () {
       captureEngineLoaded = true;
       initPreviewFocus();

@@ -14,6 +14,8 @@ function queryCriticalElements() {
     captureRetryBtn:    document.getElementById("captureRetryBtn"),
     captureStatus:      document.getElementById("captureStatus"),
     previewFrame:       document.getElementById("previewFrame"),
+    focusTarget:        document.getElementById("focusTarget"),
+    focusHint:          document.getElementById("focusHint"),
     cameraPreview:      document.getElementById("cameraPreview"),
     cameraPreviewQuagga:document.getElementById("cameraPreviewQuagga"),
     cameraSelect:       document.getElementById("cameraSelect"),
