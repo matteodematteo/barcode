@@ -71,6 +71,7 @@ const state = {
     iosWarmRestartDone: false,
     isIOS: false,
     captureContext: null,
+    workerFrameTransferUnavailable: false,
     lastDetectedBarcode: "",
     lastDetectedAt: 0,
     scanAnimationFrame: 0,

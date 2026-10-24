@@ -6,7 +6,7 @@
   let worker = null;
   let pending = null;
   let sequence = 0;
-  const workerUrl = new URL("zxing-worker.js?v=154", document.currentScript.src);
+  const workerUrl = new URL("zxing-worker.js?v=157", document.currentScript.src);
 
   window.ensureZXingLoaded = function () {
     if (readyPromise) return readyPromise;
@@ -44,6 +44,7 @@
           initialized = true;
           clearTimeout(timer);
           resolve({
+            videoFrames: data.videoFrames === true,
             detect(image, formats, options = {}) {
               if (!worker) return Promise.reject(new Error("Scanner stopped. Please retry."));
               if (pending) return Promise.reject(new Error("A frame is already being decoded"));
@@ -53,7 +54,9 @@
                   onDiagnostics: options.onDiagnostics,
                   timer: setTimeout(() => fail(new Error("Scanner read timed out. Please retry.")), 10000) };
                 try {
-                  worker.postMessage({ id, buffer: image.data.buffer, width: image.width,
+                  worker.postMessage({ id, buffer: image.videoFrame ? undefined : image.data.buffer,
+                    videoFrame: image.videoFrame, geometry: image.geometry, sampleQuality: image.sampleQuality,
+                    width: image.width,
                     height: image.height, formats, thorough: options.thorough !== false,
                     enhance: options.enhance !== false, orientation: options.orientation || 0,
                     downscale: options.downscale !== false, minLineCount: options.minLineCount || 2,
@@ -63,9 +66,13 @@
                     diagnostics: typeof options.onDiagnostics === "function",
                     regionOffset: options.regionOffset || 0,
                     preferredRegion: options.preferredRegion || null,
-                    binarizer: options.binarizer || "LocalAverage" }, [image.data.buffer]);
+                    binarizer: options.binarizer || "LocalAverage" }, [image.videoFrame || image.data.buffer]);
                 } catch (error) {
-                  fail(error);
+                  if (image.videoFrame) {
+                    clearTimeout(pending.timer); pending = null;
+                    const failure = new Error("Camera frame transfer unavailable");
+                    failure.name = "FrameTransferError"; rejectFrame(failure);
+                  } else fail(error);
                 }
               });
             }
@@ -82,7 +89,11 @@
           pending = null;
           clearTimeout(request.timer);
           try { request.onDiagnostics?.(data.diagnostics); } catch (_) { /* Diagnostics must not interrupt decoding. */ }
-          if (data.error) request.reject(new Error(data.error));
+          if (data.error) {
+            const failure = new Error(data.error);
+            if (data.framePreparationFailed) failure.name = "FramePreparationError";
+            request.reject(failure);
+          }
           else request.resolve(data.text);
         }
       };

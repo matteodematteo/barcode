@@ -193,20 +193,45 @@ body.is-entering-quantity { overflow: hidden; }
 .quantity-capture-heading h2 { font-size: 1rem; margin: 0; }
 .quantity-capture-heading .btn { width: auto; flex: 0 0 auto; min-height: 34px; padding: 0 10px; font-size: 12px; }
 #quantityBarcode { margin: 8px 0; overflow-wrap: anywhere; font-size: 13px; color: var(--muted); }
+.quantity-product-summary { margin: 0 0 12px; display: grid; gap: 8px; }
+.quantity-product-names { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 3fr); gap: 8px; }
+.quantity-product-prices { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1.4fr); gap: 8px; }
+.quantity-product-field { min-width: 0; padding: 7px 8px; border: 1px solid #e5ebe7; border-radius: 9px; background: #f7faf8; }
+.quantity-product-field span { display: block; margin-bottom: 3px; font-size: 9px; font-weight: 600; line-height: 1.2; color: #65786e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.quantity-product-field strong { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; font-weight: 650; line-height: 1.25; }
+.quantity-product-prices strong { font-size: 15px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.quantity-product-prices #quantitySellingPrice { font-size: 14px; }
+.quantity-product-prices .is-discount { color: #bd2c3f; }
+#quantityProductStatus { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.3; }
+#quantityProductStatus:empty { display: none; }
 #quantityInput { width: 100%; height: 54px; margin-bottom: 12px; text-align: right; font-size: 28px; font-weight: 700; }
 #quantityPad .qty-pad-key { min-height: 44px; }
 #quantityPad .qty-pad-key[data-key="enter"] { min-height: 50px; }
 #quantityStatus { margin: 8px 0 0; color: var(--danger); font-size: 12px; }
 #quantityStatus:empty { display: none; }
 body.is-entering-quantity .focus-hint { visibility: hidden; }
+@media (max-width: 340px) {
+  .quantity-product-field { padding: 6px; }
+  .quantity-product-prices span { font-size: 8px; }
+  .quantity-product-prices strong { font-size: 13px; }
+  .quantity-product-prices #quantitySellingPrice { font-size: 12px; }
+}
 @media (max-height: 480px) {
-  #quantityPadCard .quantity-capture-card { padding: 12px max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+  #quantityPadCard .quantity-capture-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "heading barcode" "product quantity" "keypad keypad" "status status"; gap: 6px 10px; padding: 12px max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+  .quantity-capture-heading { grid-area: heading; }
   .quantity-capture-heading .btn { min-height: 30px; }
-  #quantityBarcode { margin: 4px 0; font-size: 12px; }
-  #quantityInput { height: 36px; margin-bottom: 8px; font-size: 24px; }
-  #quantityPad { gap: 6px; }
+  #quantityBarcode { grid-area: barcode; margin: 0; align-self: center; text-align: right; font-size: 12px; }
+  .quantity-product-summary { grid-area: product; margin: 0; gap: 4px; }
+  .quantity-product-field { padding: 4px 6px; }
+  .quantity-product-field span { margin-bottom: 2px; font-size: 8px; }
+  .quantity-product-field strong { font-size: 11px; }
+  .quantity-product-prices strong, .quantity-product-prices #quantitySellingPrice { font-size: 12px; }
+  #quantityProductStatus { font-size: 10px; }
+  #quantityInput { grid-area: quantity; height: 100%; min-height: 56px; margin: 0; font-size: 28px; }
+  #quantityPad { grid-area: keypad; gap: 6px; }
   #quantityPad .qty-pad-key { min-height: 36px; }
   #quantityPad .qty-pad-key[data-key="enter"] { min-height: 40px; }
+  #quantityStatus { grid-area: status; margin: 0; }
 }
 
 /* The edit form follows its visual field order on small screens and keyboards. */

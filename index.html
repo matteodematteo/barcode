@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f5f6f2" />
-  <meta name="webscanner-version" content="154" />
+  <meta name="webscanner-version" content="157" />
   <script>
     // Keep update discovery independent of the cached application bundle.
     // The worker URL stays stable; its own update checks bypass HTTP caching.
@@ -24,12 +24,12 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Web Scanner" />
-  <link rel="manifest" href="manifest.webmanifest?v=154" />
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=154" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=154" />
+  <link rel="manifest" href="manifest.webmanifest?v=157" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=157" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=157" />
   <title>Web Barcode Scanner</title>
-  <link rel="preload" href="js/app.bundle.js?v=154" as="script" />
-  <link rel="preload" href="css/interface.bundle.css?v=154" as="style" />
+  <link rel="preload" href="js/app.bundle.js?v=157" as="script" />
+  <link rel="preload" href="css/interface.bundle.css?v=157" as="style" />
   <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
        round-trips for the above-the-fold shell (base + scanner + layout +
        essential components). The remaining interface styles load as one small sheet below. -->
@@ -360,13 +360,13 @@
   <!-- These sheets affect the visible page geometry. Keep them render-blocking so
        browsers paint the completed interface once instead of restyling sections
        progressively on a slow connection. -->
-  <link rel="stylesheet" href="css/interface.bundle.css?v=154" />
+  <link rel="stylesheet" href="css/interface.bundle.css?v=157" />
 </head>
 <body>
   <main class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=154" width="34" height="34" alt="" decoding="async" /></span>
+        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=157" width="34" height="34" alt="" decoding="async" /></span>
         <div><h1>Web Scanner</h1></div>
       </div>
       <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
@@ -560,6 +560,18 @@
     <div class="dialog-card quantity-capture-card" role="dialog" aria-modal="true" aria-labelledby="quantityTitle" aria-describedby="quantityBarcode">
       <div class="quantity-capture-heading"><h2 id="quantityTitle">Choose quantity</h2><button class="btn btn-muted" id="quantityCancelBtn" type="button">Cancel</button></div>
       <p id="quantityBarcode" class="quantity-barcode"></p>
+      <section class="quantity-product-summary" id="quantityProductSummary" aria-label="Product information" aria-busy="false">
+        <div class="quantity-product-names">
+          <div class="quantity-product-field"><span>Italian name</span><strong id="quantityItalianName">—</strong></div>
+          <div class="quantity-product-field"><span>Supplier</span><strong id="quantitySupplierName">—</strong></div>
+        </div>
+        <div class="quantity-product-prices">
+          <div class="quantity-product-field"><span>Net cost</span><strong id="quantityNetCost">—</strong></div>
+          <div class="quantity-product-field"><span>Cost + IVA 22%</span><strong id="quantityCostIva">—</strong></div>
+          <div class="quantity-product-field"><span>Selling price</span><strong id="quantitySellingPrice">—</strong></div>
+        </div>
+        <p id="quantityProductStatus" class="quantity-product-status" role="status"></p>
+      </section>
       <input class="input quantity-display" id="quantityInput" type="text" inputmode="none" value="1" aria-label="Selected quantity" readonly tabindex="-1" />
       <div class="qty-pad-grid" id="quantityPad">
         <button class="qty-pad-key" type="button" data-key="1">1</button>
@@ -773,6 +785,6 @@
     <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
   </div>
   <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
-  <script src="js/app.bundle.js?v=154" defer></script>
+  <script src="js/app.bundle.js?v=157" defer></script>
 </body>
 </html>

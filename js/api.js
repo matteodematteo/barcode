@@ -44,7 +44,7 @@ async function fetchProductInfoThroughProxy(code, cookie, options) {
       Accept: "application/json, text/plain, */*",
       "Content-Type": "application/json"
     }
-  });
+  }, { trackLoader: options?.trackLoader !== false });
 
   if (!response.ok) {
     const error = new Error(`Info proxy request failed with status ${response.status}`);
@@ -56,9 +56,10 @@ async function fetchProductInfoThroughProxy(code, cookie, options) {
 }
 
 
-async function fetchDiscountInfoThroughProxy(code, cookie) {
+async function fetchDiscountInfoThroughProxy(code, cookie, options) {
   const response = await apiFetch(CONFIG.discountProxyEndpoint, {
     method: "POST",
+    signal: options?.signal,
     body: JSON.stringify({
       barcode: code,
       cookie: cookie
@@ -198,14 +199,14 @@ async function loadProductInfoResponse(barcode, onCookie, options) {
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
       throw new Error("Offline — cannot retry product lookup.");
     }
-    setStatus("Refreshing login and retrying barcode...");
+    if (!options?.silent) setStatus("Refreshing login and retrying barcode...");
     cookie = await refreshCookieForRequests(cookie);
   }
 }
 
 
-function loadOptionalDiscount(code, cookie) {
-  return fetchDiscountInfoThroughProxy(code, cookie).then(function (text) {
+function loadOptionalDiscount(code, cookie, options) {
+  return fetchDiscountInfoThroughProxy(code, cookie, options).then(function (text) {
     try { return text ? JSON.parse(text) : null; } catch { return null; }
   }).catch(function () { return null; });
 }

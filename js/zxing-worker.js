@@ -3,17 +3,28 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
+importScripts("capture-frame-worker.js?v=157");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
   },
   fireImmediately: true
 });
-ready.then(() => self.postMessage({ type: "ready", initializeMs: performance.now() - decoderStartupStarted }))
+ready.then(() => self.postMessage({ type: "ready", initializeMs: performance.now() - decoderStartupStarted,
+  videoFrames: typeof VideoFrame === "function" && typeof OffscreenCanvas === "function" }))
   .catch((error) => self.postMessage({ type: "error", error: error.message }));
 
 let frameDiagnostics = null;
+// WASM calls cannot be interrupted, but our own image processing can. Check
+// once per small block/row group so a difficult shelf cannot turn a 60ms
+// attempt into hundreds of milliseconds before the next camera frame.
+const decodeBudgetExhausted = {};
+let decodeDeadline = Infinity;
+function checkDecodeBudget() {
+  if (performance.now() >= decodeDeadline) throw decodeBudgetExhausted;
+}
 async function readDiagnosticBarcodes(pixels, options) {
+  checkDecodeBudget();
   const diagnostics = frameDiagnostics;
   if (!diagnostics) return ZXingWASM.readBarcodes(pixels, options);
   const started = performance.now();
@@ -35,6 +46,7 @@ async function readDiagnosticBarcodes(pixels, options) {
 
 function invertPixels(pixels) {
   for (let i = 0; i < pixels.data.length; i += 4) {
+    if ((i & 16383) === 0) checkDecodeBudget();
     pixels.data[i] = 255 - pixels.data[i];
     pixels.data[i + 1] = 255 - pixels.data[i + 1];
     pixels.data[i + 2] = 255 - pixels.data[i + 2];
@@ -47,6 +59,7 @@ function invertPixels(pixels) {
 let luminance = new Uint8Array(0);
 let integral = new Uint32Array(0);
 function prepareContrast(pixels) {
+  checkDecodeBudget();
   const { width, height, data } = pixels;
   const count = width * height;
   const stride = width + 1;
@@ -57,6 +70,7 @@ function prepareContrast(pixels) {
   integral.fill(0, 0, stride);
   let darkest = 255, lightest = 0;
   for (let y = 0; y < height; y++) {
+    if ((y & 7) === 0) checkDecodeBudget();
     let rowSum = 0;
     integral[(y + 1) * stride] = 0;
     for (let x = 0; x < width; x++) {
@@ -75,11 +89,13 @@ function prepareContrast(pixels) {
 }
 
 function enhanceContrast(pixels, inverted = false) {
+  checkDecodeBudget();
   const { width, height } = pixels;
   const stride = width + 1;
   const radius = 24;
   const output = new ImageData(width, height);
   for (let y = 0; y < height; y++) {
+    if ((y & 7) === 0) checkDecodeBudget();
     const top = Math.max(0, y - radius);
     const bottom = Math.min(height, y + radius + 1);
     for (let x = 0; x < width; x++) {
@@ -100,15 +116,18 @@ function enhanceContrast(pixels, inverted = false) {
 
 // Estimate the barcode axis from image gradients. Work stays in the worker
 // and is bounded by sampling; ordinary successful reads never pay this cost.
-function estimateBarcodeRotation(pixels) {
-  const { width, height, data } = pixels;
+function estimateBarcodeRotation(pixels, rect = null) {
+  const { data } = pixels;
+  const width = rect?.width || pixels.width, height = rect?.height || pixels.height;
+  const left = rect?.x || 0, top = rect?.y || 0;
   const step = Math.max(2, Math.floor(Math.max(width, height) / 480));
   let xx = 0, yy = 0, xy = 0;
   for (let y = step; y < height - step; y += step) {
+    checkDecodeBudget();
     for (let x = step; x < width - step; x += step) {
-      const i = (y * width + x) * 4 + 1;
+      const i = ((y + top) * pixels.width + x + left) * 4 + 1;
       const gx = data[i + 4] - data[i - 4];
-      const gy = data[i + width * 4] - data[i - width * 4];
+      const gy = data[i + pixels.width * 4] - data[i - pixels.width * 4];
       xx += gx * gx;
       yy += gy * gy;
       xy += gx * gy;
@@ -124,6 +143,7 @@ function estimateBarcodeRotation(pixels) {
 
 // Pure typed arrays also work on iOS versions without OffscreenCanvas.
 function rotateBarcodePixels(pixels, angle, enlargement = 1) {
+  checkDecodeBudget();
   const radians = angle * Math.PI / 180;
   const cos = Math.cos(radians), sin = Math.sin(radians);
   const rotatedWidth = Math.abs(pixels.width * cos) + Math.abs(pixels.height * sin);
@@ -133,6 +153,7 @@ function rotateBarcodePixels(pixels, angle, enlargement = 1) {
   const output = new ImageData(width, height);
   const source = new Uint8Array(pixels.width * pixels.height);
   for (let i = 0; i < source.length; i++) {
+    if ((i & 4095) === 0) checkDecodeBudget();
     const p = i * 4;
     source[i] = (pixels.data[p] * 77 + pixels.data[p + 1] * 150 + pixels.data[p + 2] * 29) >> 8;
   }
@@ -140,6 +161,7 @@ function rotateBarcodePixels(pixels, angle, enlargement = 1) {
   target.fill(0xffffffff);
   const dx = cos / scale, dy = -sin / scale;
   for (let y = 0; y < height; y++) {
+    if ((y & 3) === 0) checkDecodeBudget();
     let sx = ((0.5 - width / 2) * cos + (y + 0.5 - height / 2) * sin) / scale + pixels.width / 2 - 0.5;
     let sy = (-(0.5 - width / 2) * sin + (y + 0.5 - height / 2) * cos) / scale + pixels.height / 2 - 0.5;
     for (let x = 0; x < width; x++, sx += dx, sy += dy) {
@@ -173,10 +195,12 @@ function isAcceptedBarcode(result) {
 // Separate strongly coloured, locally uniform label surfaces from shelves,
 // foil reflections and printed packaging. White labels use the strip search.
 function findColourLabelRegions(pixels) {
+  checkDecodeBudget();
   const { width, height, data } = pixels, tile = 16;
   const cols = Math.ceil(width / tile), rows = Math.ceil(height / tile);
   const hues = new Int8Array(cols * rows); hues.fill(-1);
   for (let ty = 0; ty < rows; ty++) for (let tx = 0; tx < cols; tx++) {
+    if (tx === 0) checkDecodeBudget();
     let r = 0, g = 0, b = 0, count = 0;
     for (let dy = 3; dy < tile; dy += 5) for (let dx = 3; dx < tile; dx += 5) {
       const x = tx * tile + dx, y = ty * tile + dy;
@@ -193,10 +217,12 @@ function findColourLabelRegions(pixels) {
   }
   const regions = [];
   for (let start = 0; start < hues.length; start++) {
+    if ((start & 63) === 0) checkDecodeBudget();
     if (hues[start] < 0) continue;
     const hue = hues[start], queue = [start]; hues[start] = -1;
     let left = cols, right = 0, top = rows, bottom = 0;
     for (let next = 0; next < queue.length; next++) {
+      if ((next & 63) === 0) checkDecodeBudget();
       const index = queue[next], x = index % cols, y = Math.floor(index / cols);
       left = Math.min(left, x); right = Math.max(right, x + 1);
       top = Math.min(top, y); bottom = Math.max(bottom, y + 1);
@@ -220,9 +246,11 @@ function findColourLabelRegions(pixels) {
 // Scan native-resolution rows for dense alternating edges. Tiny/short bars
 // are located independently of brighter packaging text or shelf outlines.
 function findBarcodeStrips(pixels) {
+  checkDecodeBudget();
   const { width, height, data } = pixels;
   const step = 4, groups = [];
   for (let y = 2; y < height - 2; y += step) {
+    checkDecodeBudget();
     const row = y * width * 4;
     let peaks = [], previousSign = 0, strongest = 0, peakX = 0, lastX = -100;
     const commitGroup = () => {
@@ -231,6 +259,7 @@ function findBarcodeStrips(pixels) {
       if (span < 48 || span > width * 0.92) { peaks = []; return; }
       let group = null;
       for (let i = groups.length - 1; i >= 0; i--) {
+        if ((i & 127) === 0) checkDecodeBudget();
         const g = groups[i];
         if (y - g.bottom > 12) continue;
         const overlap = Math.min(x1, g.right) - Math.max(x0, g.left);
@@ -248,6 +277,7 @@ function findBarcodeStrips(pixels) {
       peaks.push(peakX); lastX = peakX;
     };
     for (let x = 2; x < width - 2; x++) {
+      if ((x & 255) === 0) checkDecodeBudget();
       // Green preserves chromatic bar contrast on yellow/red shelf labels.
       const gradient = data[row + (x + 1) * 4 + 1] - data[row + (x - 1) * 4 + 1];
       const sign = gradient >= 3 ? 1 : gradient <= -3 ? -1 : 0;
@@ -261,6 +291,7 @@ function findBarcodeStrips(pixels) {
   }
   const regions = [];
   for (const g of groups) {
+    checkDecodeBudget();
     if (g.rows < 3 || g.bottom - g.top < 8) continue;
     const span = g.right - g.left, barHeight = g.bottom - g.top;
     if (barHeight > span * 1.2) continue;
@@ -281,12 +312,14 @@ function findBarcodeStrips(pixels) {
 // Normalize a colour channel using the bars' own intensity range, rather than
 // a bright shelf/reflection elsewhere in the camera frame.
 function normalizeBarcodePixels(pixels, channel = 1, core = null) {
+  checkDecodeBudget();
   const { width, height, data } = pixels, hist = new Uint32Array(256);
   const x0 = Math.max(0, Math.floor(core?.x || 0)), y0 = Math.max(0, Math.floor(core?.y || 0));
   const x1 = Math.min(width, Math.ceil(x0 + (core?.width || width)));
   const y1 = Math.min(height, Math.ceil(y0 + (core?.height || height)));
   let count = 0;
   for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+    if (x === x0 && (y & 7) === 0) checkDecodeBudget();
     hist[data[(y * width + x) * 4 + channel]]++; count++;
   }
   let low = 0, high = 255, sum = 0;
@@ -296,6 +329,7 @@ function normalizeBarcodePixels(pixels, channel = 1, core = null) {
   if (high - low < 6) return null;
   const output = new ImageData(width, height), gain = 255 / (high - low);
   for (let p = 0; p < width * height; p++) {
+    if ((p & 4095) === 0) checkDecodeBudget();
     const i = p * 4, value = Math.max(0, Math.min(255, Math.round((data[i + channel] - low) * gain)));
     output.data[i] = output.data[i + 1] = output.data[i + 2] = value; output.data[i + 3] = 255;
   }
@@ -309,22 +343,24 @@ function normalizeBarcodePixels(pixels, channel = 1, core = null) {
 // linear codes contain varied module widths across several adjacent rows.
 // This ranks candidates only; the decoder still decides what is a barcode.
 function hasBarcodeRunPattern(pixels, rect) {
-  const crop = cropBarcodePixels(pixels, rect);
-  const angle = -estimateBarcodeRotation(crop) * Math.PI / 180;
+  // Only sampled lines/gradients are needed. Copying all pixels for each of
+  // twelve candidates was more expensive than decoding the actual barcode.
+  const angle = -estimateBarcodeRotation(pixels, rect) * Math.PI / 180;
   const cos = Math.cos(angle), sin = Math.sin(angle);
   const half = Math.min(rect.width / Math.max(0.001, Math.abs(cos)),
     rect.height / Math.max(0.001, Math.abs(sin))) / 2 - 1;
   let matchingRows = 0;
   for (const offset of [-0.06, 0, 0.06]) {
+    checkDecodeBudget();
     const shift = Math.min(rect.width, rect.height) * offset;
     const cx = rect.width / 2 - sin * shift, cy = rect.height / 2 + cos * shift;
     const values = [];
     let darkest = 255, lightest = 0;
     for (let d = -half; d <= half; d++) {
       const x = Math.round(cx + cos * d), y = Math.round(cy + sin * d);
-      if (x < 0 || y < 0 || x >= crop.width || y >= crop.height) continue;
-      const i = (y * crop.width + x) * 4;
-      const value = (crop.data[i] * 77 + crop.data[i + 1] * 150 + crop.data[i + 2] * 29) >> 8;
+      if (x < 0 || y < 0 || x >= rect.width || y >= rect.height) continue;
+      const i = ((y + rect.y) * pixels.width + x + rect.x) * 4;
+      const value = (pixels.data[i] * 77 + pixels.data[i + 1] * 150 + pixels.data[i + 2] * 29) >> 8;
       values.push(value); darkest = Math.min(darkest, value); lightest = Math.max(lightest, value);
     }
     if (lightest - darkest < 12) continue;
@@ -349,13 +385,15 @@ function hasBarcodeRunPattern(pixels, rect) {
   return matchingRows >= 2;
 }
 
-function findBarcodeRegions(pixels) {
+function findBarcodeRegions(pixels, regionOffset = 0) {
+  checkDecodeBudget();
   const { width, height, data } = pixels;
   const tile = 32, cols = Math.ceil(width / tile), rows = Math.ceil(height / tile);
   const active = new Uint8Array(cols * rows), scores = new Float32Array(active.length);
   let darkest = 255, lightest = 0;
   const luma = (i) => (data[i] * 77 + data[i + 1] * 150 + data[i + 2] * 29) >> 8;
   for (let ty = 0; ty < rows; ty++) {
+    checkDecodeBudget();
     for (let tx = 0; tx < cols; tx++) {
       let xx = 0, yy = 0, xy = 0, magnitude = 0, count = 0;
       for (let y = Math.max(1, ty * tile); y < Math.min(height - 1, (ty + 1) * tile); y += 4) {
@@ -378,10 +416,12 @@ function findBarcodeRegions(pixels) {
   }
   const regions = [];
   for (let start = 0; start < active.length; start++) {
+    if ((start & 31) === 0) checkDecodeBudget();
     if (!active[start]) continue;
     const queue = [start]; active[start] = 0;
     let left = cols, right = 0, top = rows, bottom = 0, score = 0;
     for (let next = 0; next < queue.length; next++) {
+      if ((next & 31) === 0) checkDecodeBudget();
       const index = queue[next], x = index % cols, y = Math.floor(index / cols);
       left = Math.min(left, x); right = Math.max(right, x + 1);
       top = Math.min(top, y); bottom = Math.max(bottom, y + 1); score += scores[index];
@@ -404,22 +444,35 @@ function findBarcodeRegions(pixels) {
   // Consider more than the strongest four edge clusters, so bright stripes
   // and text cannot push a faint/small barcode out of the search entirely.
   const candidates = regions.slice(0, 12);
-  for (const rect of candidates) rect.barPattern = hasBarcodeRunPattern(pixels, rect);
-  candidates.sort((a, b) => Number(b.barPattern) - Number(a.barPattern) || b.score - a.score);
+  // Pattern ranking is a hint, not a prerequisite for a read. Leave time for
+  // actual decoding and rotate the inspected candidates on subsequent frames.
+  const rankingDeadline = Math.min(decodeDeadline - 8, performance.now() + 8);
+  const offset = candidates.length ? Math.abs(regionOffset) % candidates.length : 0;
+  for (let i = 0; i < candidates.length && performance.now() < rankingDeadline; i++) {
+    const rect = candidates[(offset + i) % candidates.length];
+    rect.barPattern = hasBarcodeRunPattern(pixels, rect);
+  }
+  const plausible = candidates.filter((rect) => rect.barPattern);
+  const remaining = candidates.filter((rect) => !rect.barPattern);
+  const remainingOffset = remaining.length ? Math.abs(regionOffset) % remaining.length : 0;
+  const ordered = plausible.concat(remaining.map((_, i) => remaining[(remainingOffset + i) % remaining.length]));
   let hasContrast = lightest > darkest;
   if (!hasContrast) {
     // A coarse grid must never discard a thin label between sample points.
     const reference = luma(0);
     for (let i = 4; i < data.length; i += 4) {
+      if ((i & 16383) === 0) checkDecodeBudget();
       if (luma(i) !== reference) { hasContrast = true; break; }
     }
   }
-  return { regions: candidates.slice(0, 8), hasContrast };
+  return { regions: ordered.slice(0, 8), hasContrast };
 }
 
 function cropBarcodePixels(pixels, rect) {
+  checkDecodeBudget();
   const output = new ImageData(rect.width, rect.height);
   for (let y = 0; y < rect.height; y++) {
+    if ((y & 15) === 0) checkDecodeBudget();
     const start = ((rect.y + y) * pixels.width + rect.x) * 4;
     output.data.set(pixels.data.subarray(start, start + rect.width * 4), y * rect.width * 4);
   }
@@ -518,16 +571,31 @@ async function decodeBarcodePixels(pixels, options, data, deadline) {
 }
 
 self.onmessage = async ({ data }) => {
+  let pixels, framePreparation;
+  try {
+    await ready;
+    if (data.videoFrame) {
+      const preparationStarted = performance.now();
+      const prepared = await readCameraFrame(data);
+      pixels = prepared.pixels;
+      framePreparation = { ...prepared.timings, totalMs: performance.now() - preparationStarted };
+    } else {
+      pixels = new ImageData(new Uint8ClampedArray(data.buffer), data.width, data.height);
+    }
+  } catch (_) {
+    try { data.videoFrame?.close(); } catch (_) { /* Already closed by extraction. */ }
+    self.postMessage({ id: data.id, error: "frame-preparation-failed", framePreparationFailed: true });
+    return;
+  }
   const started = performance.now();
   frameDiagnostics = data.diagnostics ? { wasmCalls: 0, wasmMs: 0, maxWasmReadMs: 0,
     rejectedResults: 0, reads: [], stage: "initial" } : null;
   const measurements = () => frameDiagnostics ? { ...frameDiagnostics,
+    framePreparation,
     workerMs: performance.now() - started, budgetMs: data.budgetMs,
     budgetExceeded: Boolean(data.budgetMs > 0 && performance.now() - started > data.budgetMs),
     workerOverheadMs: Math.max(0, performance.now() - started - frameDiagnostics.wasmMs) } : undefined;
   try {
-    await ready;
-    const pixels = new ImageData(new Uint8ClampedArray(data.buffer), data.width, data.height);
     const options = {
       formats: data.formats,
       tryHarder: data.thorough !== false,
@@ -543,7 +611,7 @@ self.onmessage = async ({ data }) => {
     // Never restart it for another stage. An individual WASM read cannot be
     // interrupted, but an expired budget must not start further retries.
     // Direct callers without a budget retain the full fallback behavior.
-    const deadline = performance.now() + (data.budgetMs > 0 ? data.budgetMs : Infinity);
+    const deadline = decodeDeadline = started + (data.budgetMs > 0 ? data.budgetMs : Infinity);
     let results = [], focusTarget = null, triedScheduledAngle = false;
     const preferred = data.preferredRegion;
     if (preferred && [preferred.x, preferred.y, preferred.width, preferred.height].every(Number.isFinite) &&
@@ -661,7 +729,7 @@ self.onmessage = async ({ data }) => {
       // Only a different binarizer needs another whole-image sparse read.
       if (options.binarizer !== "LocalAverage") results = await readDiagnosticBarcodes(pixels, quickOptions);
       if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
-        const located = findBarcodeRegions(pixels);
+        const located = findBarcodeRegions(pixels, data.regionOffset);
         if (located.hasContrast) {
           const regions = located.regions;
           const offset = regions.length ? Math.abs(data.regionOffset || 0) % regions.length : 0;
@@ -754,8 +822,14 @@ self.onmessage = async ({ data }) => {
     }
     self.postMessage({ id: data.id, text, diagnostics });
   } catch (error) {
-    self.postMessage({ id: data.id, error: error.message || "Barcode decoding failed", diagnostics: measurements() });
+    if (error === decodeBudgetExhausted) {
+      if (frameDiagnostics) frameDiagnostics.preprocessingBudgetExhausted = true;
+      self.postMessage({ id: data.id, text: "", diagnostics: measurements() });
+    } else {
+      self.postMessage({ id: data.id, error: error.message || "Barcode decoding failed", diagnostics: measurements() });
+    }
   } finally {
     frameDiagnostics = null;
+    decodeDeadline = Infinity;
   }
 };

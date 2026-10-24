@@ -13,6 +13,14 @@ const captureDiagnostics = (() => {
   const tokens = new WeakMap();
   const now = () => performance.now();
   const round = value => Number.isFinite(value) ? Math.round(value * 100) / 100 : null;
+  // performance.now() restarts on every navigation. Give each page its own
+  // random trace identity so persisted events never appear to share a clock.
+  const pageClock = {
+    pageSessionId: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID() : `page-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+    timeOriginMs: round(performance.timeOrigin),
+    initializedAt: new Date().toISOString()
+  };
   const relative = session => round(now() - session._started);
   const boundedPush = (array, value, maximum, keepFirst = 0) => {
     if (array.length >= maximum) array.splice(keepFirst, 1);
@@ -31,7 +39,10 @@ const captureDiagnostics = (() => {
   }
   function event(type, details = {}, session = current) {
     try {
-      const entry = { type, atMs: session ? relative(session) : round(now()), ...serializable(details) };
+      const timestamp = now();
+      const entry = { ...serializable(details), type,
+        atMs: session ? round(timestamp - session._started) : round(timestamp),
+        recordedAt: new Date().toISOString(), pageSessionId: pageClock.pageSessionId, pageAtMs: round(timestamp) };
       if (session) boundedPush(session.events, entry, limits.eventsPerCapture, 10);
       else boundedPush(systemEvents, entry, 60);
     } catch (_) { /* Recording must never prevent capture. */ }
@@ -71,8 +82,10 @@ const captureDiagnostics = (() => {
   }
   function start(details) {
     if (current) end("replaced");
+    const started = now();
     const session = { id: ++counter, appVersion: document.querySelector('meta[name="webscanner-version"]')?.content,
-      startedAt: new Date().toISOString(), _started: now(), status: "recording", ...details,
+      startedAt: new Date().toISOString(), _started: started, status: "recording", ...details,
+      pageClock: { ...pageClock, captureStartedAtMs: round(started) },
       marks: {}, metrics: {}, events: [], frames: [], frameCount: 0, trimmedFrames: 0 };
     boundedPush(sessions, session, limits.captures);
     current = session;
@@ -118,14 +131,25 @@ const captureDiagnostics = (() => {
       if (details.worker.budgetExceeded) metric("budgetExceededFrames", 1, session);
       metric("workerMs", details.worker.workerMs, session);
       metric("wasmMs", details.worker.wasmMs, session);
-      metric("workerHandoffMs", Math.max(0, details.decodeMs - details.worker.workerMs), session);
+      const preparation = details.worker.framePreparation;
+      if (preparation) {
+        metric("workerPreparationMs", preparation.totalMs, session);
+        metric("workerFrameDrawMs", preparation.drawMs, session);
+        metric("workerFrameReadbackMs", preparation.readbackMs, session);
+        metric("workerDiagnosticsMs", preparation.diagnosticsMs, session);
+      }
+      metric("workerHandoffMs", Math.max(0, details.decodeMs - details.worker.workerMs - (preparation?.totalMs || 0)), session);
     }
     if (details.quality) metric("sharpnessEstimate", details.quality.laplacianVariance, session);
     metric("traceRecordMs", now() - recordStarted, session);
   }
-  function sampleImage(image, session = current) {
-    if (!session || now() - (session._qualityAt ?? -Infinity) < 500) return null;
+  function reserveImageSample(session = current) {
+    if (!session || now() - (session._qualityAt ?? -Infinity) < 500) return false;
     session._qualityAt = now();
+    return true;
+  }
+  function sampleImage(image, session = current) {
+    if (!reserveImageSample(session)) return null;
     const { width, height, data } = image;
     const stepX = Math.max(1, Math.ceil(width / 48)), stepY = Math.max(1, Math.ceil(height / 32));
     let count = 0, sum = 0, sumSq = 0, lapSum = 0, lapSq = 0, dark = 0, bright = 0;
@@ -161,7 +185,7 @@ const captureDiagnostics = (() => {
     const hints = [];
     if ((session.marks["camera.streamReady"] ?? 0) > 1000) hints.push("Camera/permission acquisition exceeded one second.");
     if ((session.marks["decoder.ready"] ?? 0) - (session.marks["camera.playing"] ?? 0) > 500) hints.push("Decoder initialization delayed scanning after preview playback.");
-    if (timing.readbackMs?.max > 50) hints.push("Copying camera pixels blocked the interface for more than 50 ms.");
+    if (Math.max(timing.drawMs?.max || 0, timing.readbackMs?.max || 0) > 50) hints.push("Copying camera pixels blocked the interface for more than 50 ms.");
     if (timing.wasmMs?.max > 150) hints.push("At least one barcode read required more than 150 ms of WASM decoding.");
     if (timing.eventLoopLagMs?.max > 100 || timing.longTaskMs?.max > 100) hints.push("The main thread stalled for more than 100 ms.");
     if (session.frames.some(item => item.worker?.budgetExceeded)) hints.push("Some decoder attempts exceeded their soft retry budget.");
@@ -219,14 +243,17 @@ const captureDiagnostics = (() => {
     } catch (_) {} finally { clearTimeout(timer); }
     const assets = performance.getEntriesByType("resource").filter(item =>
       /\/(?:app\.bundle\.js|capture\.bundle\.js|zxing-worker\.js|reader\.js|zxing_reader\.wasm)(?:\?|$)/.test(item.name))
-      .slice(-30).map(item => ({ asset: new URL(item.name).pathname.split("/").pop(), durationMs: round(item.duration),
+      .slice(-30).map(item => ({ asset: new URL(item.name).pathname.split("/").pop(), durationMs: round(Math.max(0, item.duration)),
         transferBytes: item.transferSize, encodedBytes: item.encodedBodySize, startMs: round(item.startTime) }));
     const data = { schemaVersion: 1, app: "Web Scanner", appVersion: document.querySelector('meta[name="webscanner-version"]')?.content,
-      exportedAt: new Date().toISOString(), timeUnits: "milliseconds", limits,
+      exportedAt: new Date().toISOString(), timeUnits: "milliseconds", limits, pageClock,
       decoder: { name: "ZXing WASM", version: "3.1.5", formats: CONFIG.detectorFormats, confirmationFrames: 2 },
       measurementNotes: ["Focus-command completion is not physical lens convergence; the browser does not expose a reliable autofocus-complete signal.",
         "Image contrast and Laplacian variance are sampled scene-dependent estimates, not proof of focus or barcode legibility.",
-        "Decoder budgets limit retries, not an already-running WASM read. Clock values are relative to the capture opening.",
+        "Decoder budgets limit retries, not an already-running WASM read. Capture atMs values are relative to captureStartedAtMs in that capture's pageClock.",
+        "System event atMs and pageAtMs values use their page's performance clock; recordedAt is UTC. Different pageSessionId values must not share a relative timeline.",
+        "Legacy captures/events without pageClock, pageSessionId or recordedAt have unknown clock metadata; the exporting page's clock must not be inferred for them.",
+        "Worker framePreparation timings run off the interface thread; decodeMs includes preparation and worker round-trip time.",
         "No pixels, barcode values, cookies, credentials, device IDs, or request bodies are recorded. Nothing is uploaded automatically."],
       environment: { userAgent: navigator.userAgent, device, platform: navigator.platform, language: navigator.language,
         hardwareConcurrency: navigator.hardwareConcurrency, deviceMemoryGB: navigator.deviceMemory,
@@ -258,7 +285,7 @@ const captureDiagnostics = (() => {
     } catch (_) { const element = document.getElementById("captureDiagnosticsStatus"); if (element) element.textContent = "Could not download the report. Please try again."; }
     finally { if (button) button.disabled = false; }
   }
-  return { init, start, end, mark, event, error, metric, camera, candidate, frame, sampleImage, frameState,
+  return { init, start, end, mark, event, error, metric, camera, candidate, frame, sampleImage, reserveImageSample, frameState,
     report, download, status, get current() { return current; }, get recent() {
       const last = sessions[sessions.length - 1];
       return last?._started !== undefined && now() - last._started < 120000 ? last : null;

@@ -561,10 +561,8 @@ function getCoverSourceRect(videoWidth, videoHeight, containerWidth, containerHe
 }
 
 
-function drawDetectionFrame(mode, maxOutputSize = 1920) {
+function getDetectionFrameGeometry(mode, maxOutputSize = 1920) {
   const video = state.els.cameraPreview;
-  const canvas = state.els.captureCanvas;
-  const context = state.captureContext || canvas.getContext("2d", { alpha: false, willReadFrequently: true });
   const videoWidth = video.videoWidth || (state.isMobileUi ? CONFIG.mobilePreferredSquareSize : CONFIG.preferredSquareSize);
   const videoHeight = video.videoHeight || (state.isMobileUi ? CONFIG.mobilePreferredSquareSize : CONFIG.preferredSquareSize);
   let sx = 0;
@@ -573,7 +571,17 @@ function drawDetectionFrame(mode, maxOutputSize = 1920) {
   let sh = videoHeight;
   const isiOS = state.isIOS;
 
-  if (mode === "expanded" || mode === "detail" || mode === "visible") {
+  const confirmedRegion = mode === "confirm" && state.lastBarcodeRegion;
+  if (confirmedRegion) {
+    // Keep quiet zones and room for hand movement, at native sensor resolution.
+    // A missed confirmation returns to the whole-preview search next frame.
+    const px = Math.max(32, confirmedRegion.width * 0.35);
+    const py = Math.max(32, confirmedRegion.width * 0.22, confirmedRegion.height * 0.85);
+    sx = Math.max(0, Math.floor(confirmedRegion.x - px));
+    sy = Math.max(0, Math.floor(confirmedRegion.y - py));
+    sw = Math.min(videoWidth, Math.ceil(confirmedRegion.x + confirmedRegion.width + px)) - sx;
+    sh = Math.min(videoHeight, Math.ceil(confirmedRegion.y + confirmedRegion.height + py)) - sy;
+  } else if (mode === "expanded" || mode === "detail" || mode === "visible") {
     const container = state.els.previewFrame;
     const cover = getCoverSourceRect(videoWidth, videoHeight,
       container?.clientWidth || videoWidth, container?.clientHeight || videoHeight);
@@ -619,6 +627,18 @@ function drawDetectionFrame(mode, maxOutputSize = 1920) {
   const outputWidth = Math.max(1, Math.round(sw * scale));
   const outputHeight = Math.max(1, Math.round(sh * scale));
 
+  return { sx, sy, sw, sh, outputWidth, outputHeight, videoWidth, videoHeight,
+    imageSmoothingEnabled: mode === "detail" };
+}
+
+
+function drawDetectionFrame(mode, maxOutputSize = 1920) {
+  const video = state.els.cameraPreview;
+  const canvas = state.els.captureCanvas;
+  const context = state.captureContext || canvas.getContext("2d", { alpha: false, willReadFrequently: true });
+  const geometry = getDetectionFrameGeometry(mode, maxOutputSize);
+  const { sx, sy, sw, sh, outputWidth, outputHeight } = geometry;
+
   if (canvas.width !== outputWidth) {
     canvas.width = outputWidth;
   }
@@ -628,7 +648,7 @@ function drawDetectionFrame(mode, maxOutputSize = 1920) {
 
   context.imageSmoothingEnabled = mode === "detail";
   context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-  state.captureFrameGeometry = { sx, sy, sw, sh, outputWidth, outputHeight, videoWidth, videoHeight };
+  state.captureFrameGeometry = geometry;
   return canvas;
 }
 
@@ -685,29 +705,51 @@ async function detectBarcodeInFrame(frameTiming = {}) {
   // Keep the successful crop for confirmation on the next fresh camera frame.
   const confirming = Boolean(state.pendingConfirmCode && state.lastDetectionPass);
   const pass = confirming ? state.lastDetectionPass : makeDetectionPass(attempt);
+  const cropMode = confirming && state.lastBarcodeRegion ? "confirm" : pass.mode;
   const drawStarted = performance.now();
-  const canvas = drawDetectionFrame(pass.mode);
-  const frameGeometry = state.captureFrameGeometry;
-  const context = state.captureContext || canvas.getContext("2d", { willReadFrequently: true });
+  let image = null, videoFrame = null, frameGeometry;
+  if (detector.videoFrames && !state.workerFrameTransferUnavailable && typeof VideoFrame === "function") {
+    try {
+      frameGeometry = getDetectionFrameGeometry(cropMode);
+      videoFrame = new VideoFrame(state.els.cameraPreview);
+      // Geometry is in displayed video coordinates. Rotation metadata can make
+      // copyTo's coded coordinates differ; keep those cameras on canvas.
+      if (videoFrame.rotation || videoFrame.flip || videoFrame.displayWidth !== frameGeometry.videoWidth ||
+          videoFrame.displayHeight !== frameGeometry.videoHeight) {
+        videoFrame.close(); videoFrame = null;
+      }
+    } catch (error) {
+      videoFrame?.close(); videoFrame = null;
+      state.workerFrameTransferUnavailable = true;
+      captureDiagnostics.error("camera.frameTransfer", error, diagnostic);
+    }
+  }
+  let context = null, canvas = null;
+  if (!videoFrame) {
+    canvas = drawDetectionFrame(cropMode);
+    frameGeometry = state.captureFrameGeometry;
+    context = state.captureContext || canvas.getContext("2d", { willReadFrequently: true });
+  }
   const readStarted = performance.now();
-  const image = context.getImageData(0, 0, canvas.width, canvas.height);
+  if (!videoFrame) image = context.getImageData(0, 0, canvas.width, canvas.height);
   const diagnosticsStarted = performance.now();
-  let quality = null, videoState = null;
+  let quality = null, videoState = null, sampleQuality = false;
   try {
-    quality = captureDiagnostics.sampleImage(image, diagnostic);
+    if (videoFrame) sampleQuality = captureDiagnostics.reserveImageSample(diagnostic);
+    else quality = captureDiagnostics.sampleImage(image, diagnostic);
     videoState = captureDiagnostics.frameState(state.els.cameraPreview, diagnostic);
   } catch (error) { captureDiagnostics.error("diagnostics.imageSample", error, diagnostic); }
   const diagnosticsMs = performance.now() - diagnosticsStarted;
   const decodeStarted = performance.now();
   let worker = null, text = "";
   try {
-    text = await detector.detect(image,
+    text = await detector.detect(videoFrame ? { videoFrame, geometry: frameGeometry, sampleQuality } : image,
     CONFIG.detectorFormats.map((format) => ZXING_FORMAT_MAP[format]).filter(Boolean),
     { thorough: pass.thorough, enhance: pass.enhance, orientation: pass.orientation,
       downscale: pass.mode === "visible", minLineCount: 2,
       focused: pass.focused, budgetMs: confirming ? 240 : pass.budgetMs, binarizer: pass.binarizer,
       regionOffset: pass.regionOffset,
-      onDiagnostics: (details) => { worker = details; },
+      onDiagnostics: (details) => { worker = details; quality ||= details?.framePreparation?.quality; },
       preferredRegion: confirming && state.lastBarcodeRegion ? {
         x: (state.lastBarcodeRegion.x - frameGeometry.sx) * frameGeometry.outputWidth / frameGeometry.sw,
         y: (state.lastBarcodeRegion.y - frameGeometry.sy) * frameGeometry.outputHeight / frameGeometry.sh,
@@ -728,11 +770,19 @@ async function detectBarcodeInFrame(frameTiming = {}) {
         };
         updateBarcodeTracking(region, frameGeometry, session);
       } });
+  } catch (error) {
+    if (!videoFrame || !["FramePreparationError", "FrameTransferError"].includes(error.name)) throw error;
+    // Unsupported frame transfer/copy is a recoverable capability fallback.
+    // Keep this worker and use the canvas route on the next fresh frame.
+    state.workerFrameTransferUnavailable = true;
+    captureDiagnostics.error("camera.frameTransfer", error, diagnostic);
   } finally {
+    videoFrame?.close();
     captureDiagnostics.frame({ ...frameTiming, attempt, pass: { ...pass, confirming },
       drawMs: readStarted - drawStarted, readbackMs: diagnosticsStarted - readStarted,
       decodeMs: performance.now() - decodeStarted, totalMs: performance.now() - started + (frameTiming.waitMs || 0),
-      diagnosticsMs, geometry: frameGeometry, decoded: Boolean(text), worker, quality, videoState }, diagnostic);
+      diagnosticsMs, transport: videoFrame ? "video-frame" : "main-canvas", cropMode,
+      geometry: frameGeometry, decoded: Boolean(text), worker, quality, videoState }, diagnostic);
   }
   if (session === state.scanSession) {
     state.detectionAttempt = attempt + 1;
@@ -920,6 +970,13 @@ async function captureAttempt(session) {
     return false;
   }
   state.lastScanFrame = frame;
+  if (!state.captureFirstFrameMarked) {
+    // A reused video can already be playing and emit no media event until a
+    // later timeupdate. Record the readable frame now, before scanning it.
+    state.captureFirstFrameMarked = true;
+    performance.mark("webscanner-camera-frame");
+    captureDiagnostics.mark("camera.firstFrame", { source: "scan-frame" });
+  }
   if (!state.detectionAttempt) captureDiagnostics.mark("camera.firstScanFrame");
   const detectedText = await detectBarcodeInFrame({ waitMs: performance.now() - waitStarted, frame });
   if (session !== state.scanSession || !state.isScanning || document.hidden) return false;

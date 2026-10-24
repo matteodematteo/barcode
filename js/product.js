@@ -154,19 +154,20 @@ function normalizeSaleData(rawData) {
     return null;
   }
 
-  if (Array.isArray(saleSource)) {
-    return saleSource.length > 0 ? saleSource[0] : null;
-  }
-
-  if (typeof saleSource === "object") {
-    const values = Object.values(saleSource);
-    for (let index = 0; index < values.length; index += 1) {
-      const value = values[index];
-      if (Array.isArray(value) && value.length > 0) {
-        return value[0];
-      }
+  // The dedicated endpoint can wrap its row in sale/discount, named collections,
+  // or arrays. Find the actual row before reading its percentage or price.
+  const queue = [saleSource];
+  const visited = new Set();
+  while (queue.length > 0) {
+    const item = queue.shift();
+    if (!item || typeof item !== "object" || visited.has(item)) continue;
+    visited.add(item);
+    if (!Array.isArray(item) && ("sdiscount" in item || "discountPrice" in item)) {
+      return item;
     }
-    return Object.keys(saleSource).length > 0 ? saleSource : null;
+    for (const value of Object.values(item)) {
+      if (value && typeof value === "object") queue.push(value);
+    }
   }
 
   return null;
@@ -189,12 +190,14 @@ function calculateDiscountPrice(sPriceValue, sDiscountValue) {
 
 function getDiscountPercentList(productData) {
   return [
-    productData.p_discount,
+    productData.p_discount ?? productData.p_discount1,
     productData.p_discount2,
     productData.p_discount3,
     productData.p_discount4
   ]
-    .map(numberFromValue)
+    .map(function (value) {
+      return numberFromValue(String(value ?? "").replace(",", ".").replace("%", ""));
+    })
     .filter(function (value) {
       return value > 0;
     });
@@ -215,22 +218,26 @@ function getDiscountFields(rawData, productData) {
   const percents = getDiscountPercentList(productData);
   const discountPercent = formatDiscountPercentSummary(percents);
 
-  const pPrice = numberFromValue(productData.p_price);
-  const discCost = percents.length > 0 && pPrice
-    ? formatPrice(percents.reduce(function (price, percent) {
-      return price * (1 - percent / 100);
-    }, pPrice))
-    : formatPrice(pPrice);
-
-  const discIva = discCost
-    ? formatPrice(numberFromValue(discCost) * 1.22)
-    : "";
+  const pPrice = productPriceNumber(productData.p_price);
+  const discountedCost = pPrice === null ? null : percents.reduce(function (price, percent) {
+    return price * (1 - percent / 100);
+  }, pPrice);
+  const discCost = discountedCost === null ? "" : formatPrice(discountedCost) || "0";
+  // Apply IVA to the full precision cost, then round each displayed value once.
+  const discIva = discountedCost === null ? "" : formatPrice(discountedCost * 1.22) || "0";
 
   return {
     discountPercent: discountPercent,
     discCost: discCost,
     discIva: discIva
   };
+}
+
+
+function productPriceNumber(value) {
+  if (value === undefined || value === null || String(value).trim() === "") return null;
+  const numeric = Number(String(value).trim().replace(",", "."));
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : null;
 }
 
 
@@ -245,18 +252,20 @@ function getLegacyDiscountFields(rawData, productData) {
   const activeDiscountValue = usingSaleDiscount ? saleDiscountValue : productDiscountValue;
   const hasDiscount = activeDiscountValue > 0;
 
-  const sPrice = numberFromValue(productData.s_price);
+  const sPrice = productPriceNumber(productData.s_price);
+  const calculatedPrice = sPrice === null ? "" : formatPrice(sPrice * (1 - activeDiscountValue / 100)) || "0";
 
   let discountPrice = "";
   if (usingSaleDiscount && saleData.discountPrice !== undefined) {
-    const suppliedPrice = numberFromValue(String(saleData.discountPrice ?? "").replace(",", "."));
-    const staleFractionPrice = rawSaleDiscount > 0 && rawSaleDiscount < 1 && sPrice > 0
+    const suppliedPrice = productPriceNumber(saleData.discountPrice);
+    const staleFractionPrice = suppliedPrice !== null && rawSaleDiscount > 0 && rawSaleDiscount < 1 && sPrice > 0
       && Math.abs(suppliedPrice - sPrice * (1 - rawSaleDiscount / 100)) < 0.011;
-    discountPrice = staleFractionPrice || suppliedPrice <= 0
-      ? calculateDiscountPrice(sPrice, activeDiscountValue)
-      : formatPrice(suppliedPrice);
-  } else if (hasDiscount && sPrice) {
-    discountPrice = formatPrice(sPrice * (1 - activeDiscountValue / 100));
+    const placeholderZero = suppliedPrice === 0 && sPrice > 0 && activeDiscountValue < 100;
+    discountPrice = staleFractionPrice || suppliedPrice === null || placeholderZero
+      ? calculatedPrice
+      : formatPrice(suppliedPrice) || "0";
+  } else if (hasDiscount && sPrice !== null) {
+    discountPrice = calculatedPrice;
   }
 
   return {
@@ -264,6 +273,28 @@ function getLegacyDiscountFields(rawData, productData) {
     saleDiscount: hasDiscount ? activeDiscountValue : 0,
     discountPercent: hasDiscount ? formatPercent(activeDiscountValue) : "",
     hasDiscount: hasDiscount
+  };
+}
+
+
+function getQuantityProductSummary(productPayload, discountPayload) {
+  const product = normalizeProductData(productPayload);
+  const discountFields = getLegacyDiscountFields({ sale: discountPayload }, product);
+  const purchasePrice = productPriceNumber(product.p_price);
+  const discountedCost = purchasePrice === null ? null : getDiscountPercentList(product).reduce(function (price, percent) {
+    return price * (1 - percent / 100);
+  }, purchasePrice);
+  const sellingPrice = productPriceNumber(discountFields.hasDiscount ? discountFields.discountPrice : product.s_price);
+  const displayPrice = function (value) { return value === null ? "" : value.toFixed(2); };
+
+  return {
+    italianName: String(product.italian_name ?? ""),
+    supplierName: String(product.supplier_name ?? ""),
+    netCost: displayPrice(discountedCost),
+    costWithIva: displayPrice(discountedCost === null ? null : discountedCost * 1.22),
+    sellingPrice: displayPrice(sellingPrice),
+    saleDiscount: discountFields.saleDiscount,
+    hasDiscount: discountFields.hasDiscount
   };
 }
 
@@ -325,36 +356,56 @@ async function fetchProductInfo(barcode, options) {
   const lookupSequence = state.lookupSequence + 1;
   state.lookupSequence = lookupSequence;
   const createdHistoryId = lookupOptions.addToHistoryBeforeLookup ? addHistoryItem(code, comparisonQty) : "";
+  const updateConfirmedRow = function (record) {
+    const row = state.history.find(item => item.id === createdHistoryId);
+    if (row) updateHistoryItem(row.id, { ...record, id: row.id, comparison_qty: row.comparison_qty });
+  };
   setStatus("Requesting product info...");
   try {
-    let discountPromise;
-    const info = await loadProductInfoResponse(code, function (cookie) {
-      // Restart the optional discount lookup with the refreshed session too.
-      discountPromise = loadOptionalDiscount(code, cookie);
-    }, { retryMissing: !lookupOptions.allowClosestSearch });
-    if (lookupSequence !== state.lookupSequence) return "cancelled";
+    const prefetched = lookupOptions.prefetchedLookup?.code === code ? lookupOptions.prefetchedLookup : null;
+    let discountPromise = Promise.resolve(null);
+    let info;
+    if (prefetched) {
+      // The popup protected this silent request from updates while it was open.
+      // After Enter, keep the usual request guard until product info arrives.
+      showApiLoader();
+      try { info = await prefetched.infoPromise; }
+      finally { hideApiLoader(); }
+      discountPromise = prefetched.discountPromise;
+    } else {
+      info = await loadProductInfoResponse(code, function (cookie) {
+        // Restart the optional discount lookup with the refreshed session too.
+        discountPromise = loadOptionalDiscount(code, cookie);
+      }, { retryMissing: !lookupOptions.allowClosestSearch });
+    }
+    const isCurrentLookup = lookupSequence === state.lookupSequence;
+    if (!isCurrentLookup && !createdHistoryId) return "cancelled";
     const parsedProduct = info.raw;
     if (!hasProductInDatabase(info.normalized, code) ||
         (lookupOptions.allowClosestSearch && String(info.normalized.goods_code || "").trim() !== code)) {
       throw createNoExactMatchError();
     }
 
-    // Product info first (discount filled later in background).
-    renderProductData({
-      product: parsedProduct?.product || parsedProduct,
-      sale: null
-    });
-    if (state.currentProductRecord && lookupOptions.persistToHistory) {
-      state.currentProductRecord.comparison_qty = comparisonQty;
-      if (createdHistoryId) {
-        updateHistoryItem(createdHistoryId, state.currentProductRecord);
-      } else {
-        addHistoryRecord(state.currentProductRecord, code, comparisonQty);
+    const initialSale = prefetched?.discountLoaded ? prefetched.sale : null;
+    // Enrich earlier confirmed rows even when a newer lookup owns the screen.
+    if (!isCurrentLookup) {
+      if (lookupOptions.persistToHistory) updateConfirmedRow(buildHistoryItemFromLookupData(
+        parsedProduct?.product || parsedProduct, initialSale, code, comparisonQty));
+    } else {
+      // Product info first (discount filled later in background).
+      renderProductData({ product: parsedProduct?.product || parsedProduct, sale: initialSale });
+      if (state.currentProductRecord && lookupOptions.persistToHistory) {
+        state.currentProductRecord.comparison_qty = comparisonQty;
+        if (createdHistoryId) {
+          updateHistoryItem(createdHistoryId, state.currentProductRecord);
+        } else {
+          addHistoryRecord(state.currentProductRecord, code, comparisonQty);
+        }
+        // Sync product fields to matching rows while preserving each quantity.
+        syncHistoryRowsWithRecord(state.currentProductRecord, code);
       }
-      // Sync name/cost/price/discount to EVERY history row with this barcode.
-      syncHistoryRowsWithRecord(state.currentProductRecord, code);
+      setStatus("Product info loaded");
     }
-    setStatus("Product info loaded");
 
     // Always request discount in background; update UI + all matching history rows.
     discountPromise.then(function (parsedDiscount) {
@@ -364,6 +415,11 @@ async function fetchProductInfo(barcode, options) {
           code,
           comparisonQty
         );
+
+        if (lookupSequence !== state.lookupSequence && createdHistoryId) {
+          if (lookupOptions.persistToHistory) updateConfirmedRow(updatedRecord);
+          return;
+        }
 
         // Push product + discount fields to all rows with this barcode (qty preserved per row).
         syncHistoryRowsWithRecord(updatedRecord, code);

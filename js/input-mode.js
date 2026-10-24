@@ -3,6 +3,70 @@
 /* Input mode, quantity pad, and product info slider */
 
 let quantitySubmissionPending = false;
+let quantityProductLookup = null;
+
+function renderQuantityProductDetails(request) {
+  if (!state.quantityCaptureOpen || quantityProductLookup !== request || state.pendingQuantityCode !== request.code) return;
+  const info = request.info;
+  const summary = info ? getQuantityProductSummary(info.raw, request.sale) : null;
+  const setValue = function (element, value) {
+    element.textContent = value || "—";
+    element.title = value || "";
+  };
+  setValue(state.els.quantityItalianName, summary?.italianName || (!info && !request.error ? "Loading…" : ""));
+  setValue(state.els.quantitySupplierName, summary?.supplierName);
+  setValue(state.els.quantityNetCost, summary?.netCost ? `€${summary.netCost}` : "");
+  setValue(state.els.quantityCostIva, summary?.costWithIva ? `€${summary.costWithIva}` : "");
+  const discountLabel = summary?.hasDiscount ? ` (${trimTrailingZeros(summary.saleDiscount)}%)` : "";
+  setValue(state.els.quantitySellingPrice, summary?.sellingPrice ? `€${summary.sellingPrice}${discountLabel}` : "");
+  state.els.quantitySellingPrice.classList.toggle("is-discount", Boolean(summary?.hasDiscount && summary.sellingPrice));
+  state.els.quantityProductSummary.setAttribute("aria-busy", String(!request.error && (!info || !request.discountLoaded)));
+  state.els.quantityProductStatus.textContent = request.error
+    ? request.error.code === "NO_EXACT_MATCH" ? "Product not found. You can still add the barcode."
+      : "Product details unavailable. You can still add the barcode."
+    : !info ? "Loading product details…" : !request.discountLoaded ? "Checking discount…" : "";
+}
+
+function startQuantityProductLookup(code) {
+  const request = { code, controller: new AbortController(), info: null, sale: null,
+    discountLoaded: false, discountRevision: 0, discountPromise: Promise.resolve(null), error: null };
+  quantityProductLookup = request;
+  renderQuantityProductDetails(request);
+  request.infoPromise = Promise.resolve().then(function () {
+    return loadProductInfoResponse(code, function (cookie) {
+      // A cookie retry replaces the earlier optional discount response too.
+      const revision = ++request.discountRevision;
+      request.discountLoaded = false;
+      request.sale = null;
+      request.discountPromise = Promise.resolve().then(function () {
+        return request.controller.signal.aborted ? null
+          : loadOptionalDiscount(code, cookie, { signal: request.controller.signal });
+      }).catch(() => null);
+      request.discountPromise.then(function (sale) {
+        if (revision !== request.discountRevision) return;
+        request.sale = sale;
+        request.discountLoaded = true;
+        renderQuantityProductDetails(request);
+      });
+    }, { signal: request.controller.signal, trackLoader: false, silent: true, retryMissing: true });
+  }).then(function (info) {
+    // Never display a similar or previous product for the captured barcode.
+    const product = info.normalized || normalizeProductData(info.raw);
+    if (!hasProductInDatabase(product, code) || String(product.goods_code || "").trim() !== code) {
+      throw createNoExactMatchError();
+    }
+    return info;
+  });
+  request.infoPromise.then(function (info) {
+    request.info = info;
+    if (!request.discountRevision) request.discountLoaded = true;
+    renderQuantityProductDetails(request);
+  }, function (error) {
+    request.error = error;
+    renderQuantityProductDetails(request);
+  });
+  return request;
+}
 
 function canEnterQuantity() {
   return Boolean(state.quantityCaptureOpen && state.isQuantityEntryUnlocked &&
@@ -69,11 +133,15 @@ function openQuantityCapture(barcode) {
   updateQuantityPadAvailability();
   setStatus("Choose quantity");
   state.els.quantityPad.querySelector('[data-key="1"]').focus({ preventScroll: true });
+  startQuantityProductLookup(code);
 }
 
 
-function closeQuantityCapture() {
+function closeQuantityCapture(options = {}) {
   if (!state.quantityCaptureOpen) return;
+  const request = quantityProductLookup;
+  quantityProductLookup = null;
+  if (!options.keepProductLookup) request?.controller.abort();
   state.quantityCaptureOpen = false;
   state.pendingQuantityCode = "";
   state.els.quantityPadCard.hidden = true;
@@ -168,10 +236,11 @@ async function addCurrentBarcodeWithQuantity() {
   }
 
   const comparisonQty = sanitizeQuantity(state.els.quantityInput.value);
+  const prefetchedLookup = quantityProductLookup;
   captureDiagnostics.mark("quantity.confirmed");
   state.els.quantityInput.value = String(comparisonQty);
   quantitySubmissionPending = true;
-  closeQuantityCapture();
+  closeQuantityCapture({ keepProductLookup: true });
   if (state.capturePageOpen) closeCapturePage({ captured: true });
   else moveFocusToInput(state.els.barcodeInput);
   quantitySubmissionPending = false;
@@ -181,7 +250,8 @@ async function addCurrentBarcodeWithQuantity() {
     await fetchProductInfo(code, {
       allowClosestSearch: false,
       addToHistoryBeforeLookup: true,
-      comparisonQty: comparisonQty
+      comparisonQty: comparisonQty,
+      prefetchedLookup: prefetchedLookup
     });
   } finally {
     quantitySubmissionPending = false;

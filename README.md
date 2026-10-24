@@ -68,8 +68,16 @@ the selected point through the preview crop and preserves resolution and torch
 settings. The hint reports when point focus is unavailable on a browser or lens.
 "Focus requested" acknowledges the camera command; the browser cannot confirm
 that the physical image is sharp.
-The decoder runs in a worker and transfers pixel buffers without
-blocking the interface. The worker and live camera stay ready for subsequent
+On browsers supporting transferable VideoFrames, the camera snapshot is sent
+to the worker before copying pixels. Native-size RGBA copying avoids the
+software canvas draw on the interface thread; a worker canvas handles unsupported
+copy conversions. Browsers without frame transfer retain the ordinary canvas
+path. A failed transfer/conversion falls back without stopping capture.
+Confirmation copies a padded native-resolution area around the detected barcode;
+a miss returns to searching the preview. Pure JavaScript image processing checks
+the shared retry deadline, so long rotations and region searches yield to fresh
+camera frames. An individual WASM read cannot be interrupted.
+The decoder runs in the worker. The worker and live camera stay ready for subsequent
 captures while the app remains visible. Saved
 authentication refreshes in the background on startup, when the app reopens,
 and after reconnecting. Product requests share an in-flight refresh; startup and
@@ -123,6 +131,16 @@ typed-barcode confirmation. Its three columns are 1–3, 4–6, 7–9, then C, 0
 A taller Enter / Add button spans the final row. Quantity starts at 1; the first
 digit replaces it. Cancel, Escape, or camera Back discards the pending capture.
 There is no quantity box or permanent keypad on the main screen.
+Below the barcode, Italian name and supplier use a 70/30 split and stay on one
+line with ellipses. The next row shows net cost after all purchase discounts,
+that unrounded cost plus 22% IVA, and the selling price. Active dedicated sale
+discounts take priority over product `s_discount`; percentages are never stacked.
+Discounted selling prices and their percentage appear in red.
+Product and discount lookups begin while the keypad is open. Enter immediately
+adds the selected quantity and returns to the list, reusing the same lookup.
+Cancel aborts the lookup; late responses cannot change another pending capture.
+Missing/offline product details leave the keypad usable. In landscape, details
+and quantity share a row above the keypad so Enter stays visible.
 
 Confirming Clear list first stores a full snapshot in Recent print requests,
 labelled Saved list. Saved lists survive reloads and can be viewed or printed
@@ -145,6 +163,12 @@ passes, confirmation misses and anonymous candidate changes; dropped/stale
 frames; interface long tasks; sampled contrast/sharpness estimates; and network
 request categories/timings. Device/browser details and recording overhead are
 included to help compare reports.
+New events include UTC time and a page-session identity so reports remain
+readable across reloads. Older saved events keep their original unknown page
+clock. First-frame timing includes a fresh readable frame during camera reuse,
+without waiting for a later video time-update event.
+Frame records distinguish copying on the interface thread from worker
+preparation; worker copying is excluded from decoder time and reported separately.
 
 Focus-command completion does not confirm physical lens convergence, and image
 clarity estimates depend on the scene. No photographs, raw barcode values,
@@ -178,6 +202,16 @@ local server, fake camera, and lookup stubs without contacting live services.
 focus/frame/WASM/stall metrics, JSON download, bounded retention, reload
 persistence and exclusion of sensitive values. Recording-overhead measurements
 from this desktop fake-camera test do not replace measurements on a phone.
+`node tests/test_frame_transport.cjs` checks native and scaled worker pixel
+copies, transfer fallback, geometry and resource release. `node
+tests/test_decoder_budget.cjs` checks cooperative deadlines and barcode decoding
+after expensive image processing is interrupted.
+`node tests/test_diagnostics_timeline.cjs` checks event clocks across page
+reloads and first-frame ordering when reusing a live camera.
+`node tests/test_quantity_pricing.cjs` checks purchase-discount chains, IVA
+rounding, and dedicated sale-discount priority. `node tests/test_quantity_product.cjs`
+checks the keypad details, responsive layout, request reuse, cancellation,
+stale results, zero/missing prices and offline entry in the browser.
 
 With the local server running, install the optional test dependency and run:
 
