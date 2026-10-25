@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=160");
+importScripts("capture-frame-worker.js?v=162");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -479,6 +479,22 @@ function cropBarcodePixels(pixels, rect) {
   return output;
 }
 
+async function readBarcodeStrip(pixels, rect, options, deadline) {
+  if (performance.now() >= deadline) return [];
+  const crop = cropBarcodePixels(pixels, rect);
+  if (performance.now() >= deadline) return [];
+  let results = await readDiagnosticBarcodes(crop, options);
+  if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+    const normalized = normalizeBarcodePixels(crop, 1, rect.core);
+    if (normalized && performance.now() < deadline) results = await readDiagnosticBarcodes(normalized, options);
+  }
+  if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+    const normalized = normalizeBarcodePixels(crop, 1);
+    if (normalized && performance.now() < deadline) results = await readDiagnosticBarcodes(normalized, options);
+  }
+  return results.some(isAcceptedBarcode) ? offsetBarcodePositions(results, rect) : [];
+}
+
 async function readBarcodePixels(pixels, options, deadline = Infinity) {
   if (performance.now() >= deadline) return [];
   const initialOptions = options.binarizer === "FixedThreshold"
@@ -639,11 +655,43 @@ self.onmessage = async ({ data }) => {
       }
     }
     if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
-      // Sparse full-image rows are cheap. Reflective shelves need local colour
-      if (frameDiagnostics) frameDiagnostics.stage = "full-frame-quick";
-      // correction, rather than repeated dense reads of the entire scene.
       const quick = { ...options, tryHarder: false, tryDownscale: false, binarizer: "LocalAverage" };
+      const dense = { ...quick, tryHarder: true };
+      // Preserve a whole-frame read first: a tight crop can occasionally
+      // produce a different, checksum-valid EAN-13 from the same bars.
+      if (frameDiagnostics) frameDiagnostics.stage = "full-frame-quick";
       results = await readDiagnosticBarcodes(pixels, quick);
+      let globalStrips = [];
+      if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+        // Search the aimed center band first. A small retail label should not
+        // spend its short frame budget on distant shelves and package text.
+        if (frameDiagnostics) frameDiagnostics.stage = "center-strip-priority";
+        const bandY = Math.floor(pixels.height * 0.35);
+        const bandHeight = Math.ceil(pixels.height * 0.3);
+        const band = cropBarcodePixels(pixels, { x: 0, y: bandY, width: pixels.width, height: bandHeight });
+        const centerStrips = findBarcodeStrips(band).map((rect) => ({ ...rect, y: rect.y + bandY }));
+        if (frameDiagnostics) {
+          frameDiagnostics.centerStrips = centerStrips.length;
+          frameDiagnostics.priorityStrips = centerStrips.slice(0, 3).map(({ x, y, width, height, edges }) =>
+            ({ x, y, width, height, edges }));
+        }
+        for (const rect of centerStrips.slice(0, 3)) {
+          if (performance.now() >= deadline) break;
+          results = await readBarcodeStrip(pixels, rect, dense, deadline);
+          if (results.some(isAcceptedBarcode)) break;
+        }
+      }
+      if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+        // The full preview remains searchable when the label is off center.
+        if (frameDiagnostics) frameDiagnostics.stage = "barcode-strip-priority";
+        globalStrips = findBarcodeStrips(pixels);
+        if (frameDiagnostics) frameDiagnostics.globalStrips = globalStrips.length;
+        for (const rect of globalStrips.slice(0, 3)) {
+          if (performance.now() >= deadline) break;
+          results = await readBarcodeStrip(pixels, rect, dense, deadline);
+          if (results.some(isAcceptedBarcode)) break;
+        }
+      }
       const scheduledAngle = data.orientation === "auto" ? 0 : Number(data.orientation);
       if (!results.some(isAcceptedBarcode) && Number.isFinite(scheduledAngle) && scheduledAngle &&
           performance.now() < deadline) {
@@ -656,8 +704,8 @@ self.onmessage = async ({ data }) => {
       if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
         const panels = findColourLabelRegions(pixels);
         if (frameDiagnostics) frameDiagnostics.stage = "label-strip-search";
+        const local = [];
         if (panels.length) {
-          const local = [];
           for (const panel of panels) {
             if (performance.now() >= deadline) break;
             // Wide coloured packaging headers are still searched globally;
@@ -677,27 +725,13 @@ self.onmessage = async ({ data }) => {
             }
           }
           local.sort((a, b) => b.score - a.score);
-          const regions = performance.now() < deadline ? local.concat(findBarcodeStrips(pixels)) : local;
-          const dense = { ...quick, tryHarder: true };
-          // Try each candidate once before rotating or enlarging a distractor.
-          // Original colour can read Code128 even when a green plane cannot.
-          for (const rect of regions) {
-            if (performance.now() >= deadline) break;
-            const crop = cropBarcodePixels(pixels, rect);
-            if (performance.now() >= deadline) break;
-            results = await readDiagnosticBarcodes(crop, dense);
-            if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
-              const normalized = normalizeBarcodePixels(crop, 1, rect.core);
-              if (normalized && performance.now() < deadline) results = await readDiagnosticBarcodes(normalized, dense);
-            }
-            if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
-              // Video colour conversion can weaken edge rows. Include the
-              // quiet-zone intensity range before spending rotation retries.
-              const normalized = normalizeBarcodePixels(crop, 1);
-              if (normalized && performance.now() < deadline) results = await readDiagnosticBarcodes(normalized, dense);
-            }
-            if (results.some(isAcceptedBarcode)) { results = offsetBarcodePositions(results, rect); break; }
-          }
+        }
+        // Remaining whole-frame strips still run when there are no coloured
+        // panels, and coloured label crops get their own chance afterwards.
+        for (const rect of globalStrips.slice(3).concat(local)) {
+          if (performance.now() >= deadline) break;
+          results = await readBarcodeStrip(pixels, rect, dense, deadline);
+          if (results.some(isAcceptedBarcode)) break;
         }
       }
     }

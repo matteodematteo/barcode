@@ -118,6 +118,27 @@ function bindDeferredEvents() {
       state.els.sendTxtBtn.disabled = state.history.length === 0;
     }
   });
+  state.els.namedUniqueBtn.addEventListener("click", function () {
+    openNamedUniqueDialog("current");
+  });
+  state.els.namedUniqueNameInput.addEventListener("input", function () {
+    state.els.namedUniqueStatus.textContent = "";
+    updateNamedUniqueValidation();
+  });
+  state.els.namedUniqueNameInput.addEventListener("keydown", function (event) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (!state.els.namedUniqueSendBtn.disabled) sendNamedUnique();
+    }
+  });
+  state.els.namedUniqueSendBtn.addEventListener("click", sendNamedUnique);
+  state.els.namedUniqueCancelBtn.addEventListener("click", function () { closeNamedUniqueDialog(); });
+  state.els.namedUniqueDialog.addEventListener("click", function (event) {
+    if (event.target === state.els.namedUniqueDialog) closeNamedUniqueDialog();
+  });
+  state.els.namedUniqueDialog.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") { event.preventDefault(); closeNamedUniqueDialog(); }
+  });
 
   state.els.printBtn.addEventListener("click", function () {
     if (state.history.length === 0 && state.printRequests.length === 0) {
@@ -405,6 +426,9 @@ function bindDeferredEvents() {
     if (event.target === state.els.printRequestDetailDialog) closePrintRequestDetail();
   });
   state.els.printRequestTxtBtn.addEventListener("click", function () { sendSavedPrintRequest("TXT"); });
+  state.els.printRequestNamedUniqueBtn.addEventListener("click", function () {
+    openNamedUniqueDialog("saved", state.activePrintRequestId);
+  });
   state.els.printRequestBigBtn.addEventListener("click", function () { sendSavedPrintRequest("60*38"); });
   state.els.printRequestStickerBtn.addEventListener("click", function () { sendSavedPrintRequest("40*25"); });
   state.els.printRequestDetailDialog.addEventListener("keydown", function (event) {

@@ -55,6 +55,7 @@ function renderHistory() {
   if (typeof syncSalesPerformanceRequests === "function") syncSalesPerformanceRequests();
   state.els.clearAllBtn.disabled = state.history.length === 0;
   state.els.sendTxtBtn.disabled = state.history.length === 0;
+  state.els.namedUniqueBtn.disabled = state.history.length === 0;
   state.els.printBtn.disabled = state.history.length === 0 && state.printRequests.length === 0;
   if (state.els.historyCountBadge) {
     const countText = `[${state.history.length}]`;
@@ -102,6 +103,16 @@ function renderHistory() {
     };
     scheduleIdleWork(appendBatch, 200);
   }
+}
+
+function revealNewestHistoryItem(entryId) {
+  const list = state.els.historyList;
+  if (!list || !state.history.length ||
+      (entryId && state.history[0].id !== entryId)) return;
+  // A new record is inserted at index zero. A previously scrolled list can
+  // otherwise keep the selected row outside the visible part of the screen.
+  list.scrollTop = 0;
+  list.querySelector('.history-item[data-index="0"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 
@@ -199,6 +210,7 @@ function addHistoryItem(barcode, comparisonQty) {
   state.selectedHistoryIndex = 0;
   saveHistoryState();
   renderHistory();
+  revealNewestHistoryItem(entry.id);
   return entry.id;
 }
 
@@ -217,6 +229,7 @@ function addHistoryRecord(record, fallbackBarcode, comparisonQty) {
   state.selectedHistoryIndex = 0;
   saveHistoryState();
   renderHistory();
+  revealNewestHistoryItem(entry.id);
   return entry.id;
 }
 
@@ -496,11 +509,14 @@ function buildHistoryPayloadItem(item) {
 
 
 async function sendTxtList() {
+  if (state.isWorkerSending) return;
   if (state.history.length === 0) {
     setStatus("Barcode list is empty");
     return;
   }
 
+  state.isWorkerSending = true;
+  try {
   const sentItems = state.history.map(copyPrintRequestItem);
   const payload = {
     session_id: formatSessionId(),
@@ -533,6 +549,9 @@ async function sendTxtList() {
   saveHistoryState();
   renderHistory();
   setStatus(saved ? "TXT sent successfully" : "TXT sent, but recent request could not be saved on this device");
+  } finally {
+    state.isWorkerSending = false;
+  }
 }
 
 
@@ -554,6 +573,8 @@ function buildDirectPrintPayloadItem(item) {
 
 
 async function runDirectPrint(printType, confirmedSignature) {
+  if (state.isWorkerSending) return;
+  state.isWorkerSending = true;
   state.els.printBigBtn.disabled = true;
   state.els.printStickerBtn.disabled = true;
   state.els.printBtn.disabled = true;
@@ -566,6 +587,7 @@ async function runDirectPrint(printType, confirmedSignature) {
   } catch (error) {
     setStatus(error.message || "Print failed");
   } finally {
+    state.isWorkerSending = false;
     state.els.printBigBtn.disabled = state.history.length === 0;
     state.els.printStickerBtn.disabled = state.history.length === 0;
     state.els.printBtn.disabled = state.history.length === 0 && state.printRequests.length === 0;

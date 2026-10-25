@@ -46,7 +46,7 @@
 
   const canReload = function () {
     if (document.visibilityState !== "visible" || navigator.onLine === false ||
-        !state.els || isAnyDialogOpen() || state.pendingApiRequests || state.isPrintRequestSending) return false;
+        !state.els || isAnyDialogOpen() || state.pendingApiRequests || state.isWorkerSending) return false;
     return !document.activeElement?.matches("input, textarea, select, [contenteditable='true']");
   };
   const retry = function (delay) {

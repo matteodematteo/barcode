@@ -38,6 +38,8 @@ const state = {
     printRequests: [],
     activePrintRequestId: "",
     isPrintRequestSending: false,
+    isNamedUniqueSending: false,
+    isWorkerSending: false,
     selectedHistoryIndex: -1,
     pendingConfirmAction: null,
     currentProductRecord: null,

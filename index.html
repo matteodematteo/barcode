@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f5f6f2" />
-  <meta name="webscanner-version" content="160" />
+  <meta name="webscanner-version" content="162" />
   <script>
     // Keep update discovery independent of the cached application bundle.
     // The worker URL stays stable; its own update checks bypass HTTP caching.
@@ -24,12 +24,12 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Web Scanner" />
-  <link rel="manifest" href="manifest.webmanifest?v=160" />
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=160" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=160" />
+  <link rel="manifest" href="manifest.webmanifest?v=162" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=162" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=162" />
   <title>Web Barcode Scanner</title>
-  <link rel="preload" href="js/app.bundle.js?v=160" as="script" />
-  <link rel="preload" href="css/interface.bundle.css?v=160" as="style" />
+  <link rel="preload" href="js/app.bundle.js?v=162" as="script" />
+  <link rel="preload" href="css/interface.bundle.css?v=162" as="style" />
   <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
        round-trips for the above-the-fold shell (base + scanner + layout +
        essential components). The remaining interface styles load as one small sheet below. -->
@@ -360,13 +360,13 @@
   <!-- These sheets affect the visible page geometry. Keep them render-blocking so
        browsers paint the completed interface once instead of restyling sections
        progressively on a slow connection. -->
-  <link rel="stylesheet" href="css/interface.bundle.css?v=160" />
+  <link rel="stylesheet" href="css/interface.bundle.css?v=162" />
 </head>
 <body>
   <main class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=160" width="34" height="34" alt="" decoding="async" /></span>
+        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=162" width="34" height="34" alt="" decoding="async" /></span>
         <div><h1>Web Scanner</h1></div>
       </div>
       <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
@@ -679,6 +679,7 @@
         <button class="btn btn-primary" id="printBigBtn" type="button">[BIG] 60*38</button>
         <button class="btn btn-primary" id="printStickerBtn" type="button">[STICKER] 40*25</button>
         <button class="btn btn-primary" id="sendTxtBtn" type="button">Send TXT</button>
+        <button class="btn btn-primary" id="namedUniqueBtn" type="button">Named/Unique</button>
         <button class="btn btn-muted" id="printBackBtn" type="button">Back</button>
       </div>
       <section class="print-request-section" aria-labelledby="printRequestHistoryTitle">
@@ -708,8 +709,24 @@
       <div class="dialog-actions print-request-detail-actions">
         <button class="btn btn-muted" id="printRequestCancelBtn" type="button">Cancel</button>
         <button class="btn btn-primary" id="printRequestTxtBtn" type="button">TXT</button>
+        <button class="btn btn-primary" id="printRequestNamedUniqueBtn" type="button">Named/Unique</button>
         <button class="btn btn-primary" id="printRequestBigBtn" type="button">60*38</button>
         <button class="btn btn-primary" id="printRequestStickerBtn" type="button">40*25</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dialog-backdrop" id="namedUniqueDialog" aria-hidden="true">
+    <div class="dialog-card named-unique-card" role="dialog" aria-modal="true" aria-labelledby="namedUniqueTitle">
+      <h2 id="namedUniqueTitle">Named/Unique TXT</h2>
+      <p>Give this barcode list a name. Repeated barcodes will be combined and their quantities added.</p>
+      <label for="namedUniqueNameInput">Name</label>
+      <input class="input" id="namedUniqueNameInput" type="text" maxlength="160" autocomplete="off" spellcheck="false" aria-describedby="namedUniquePreview namedUniqueStatus" />
+      <p class="named-unique-preview" id="namedUniquePreview" aria-live="polite"></p>
+      <p class="named-unique-status" id="namedUniqueStatus" role="status" aria-live="polite"></p>
+      <div class="dialog-actions named-unique-actions">
+        <button class="btn btn-muted" id="namedUniqueCancelBtn" type="button">Cancel</button>
+        <button class="btn btn-primary" id="namedUniqueSendBtn" type="button" disabled>Send</button>
       </div>
     </div>
   </div>
@@ -805,6 +822,6 @@
     <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
   </div>
   <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
-  <script src="js/app.bundle.js?v=160" defer></script>
+  <script src="js/app.bundle.js?v=162" defer></script>
 </body>
 </html>

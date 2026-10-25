@@ -32,7 +32,7 @@ function copyPrintRequestItem(item) {
 }
 
 function normalizePrintRequest(value) {
-  if (!value || !["LIST", "TXT", "60*38", "40*25"].includes(value.type) || !Array.isArray(value.items)) return null;
+  if (!value || !["LIST", "TXT", "TXT Unique", "60*38", "40*25"].includes(value.type) || !Array.isArray(value.items)) return null;
   const items = value.items.map(copyPrintRequestItem).filter((item) => item.barcode);
   if (!items.length) return null;
   return {
@@ -41,6 +41,7 @@ function normalizePrintRequest(value) {
     sentAt: String(value.sentAt || ""),
     tunnelId: ["gate1", "gate2"].includes(value.tunnelId) ? value.tunnelId : "",
     timestamp: Boolean(value.timestamp),
+    fileName: String(value.fileName || ""),
     items
   };
 }
@@ -56,10 +57,10 @@ function loadPrintRequestHistory() {
   }
 }
 
-function recordSentPrintRequest(type, items, timestamp, tunnelId) {
+function recordSentPrintRequest(type, items, timestamp, tunnelId, fileName = "") {
   const entry = normalizePrintRequest({
     id: `print_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    type, sentAt: new Date().toISOString(), tunnelId, timestamp, items
+    type, sentAt: new Date().toISOString(), tunnelId, timestamp, items, fileName
   });
   if (!entry) return false;
   const next = [entry, ...state.printRequests].slice(0, MAX_PRINT_REQUESTS);
@@ -76,7 +77,8 @@ function recordSentPrintRequest(type, items, timestamp, tunnelId) {
 }
 
 function printRequestTypeLabel(type) {
-  return type === "LIST" ? "Saved list" : type === "60*38" ? "BIG 60*38" : type === "40*25" ? "STICKER 40*25" : "TXT";
+  return type === "LIST" ? "Saved list" : type === "TXT Unique" ? "TXT Unique" :
+    type === "60*38" ? "BIG 60*38" : type === "40*25" ? "STICKER 40*25" : "TXT";
 }
 
 function formatPrintRequestDate(iso) {
@@ -105,7 +107,7 @@ function renderPrintRequestHistory() {
     const heading = document.createElement("strong");
     heading.textContent = `${printRequestTypeLabel(entry.type)} · ${entry.items.length} barcode${entry.items.length === 1 ? "" : "s"}`;
     const meta = document.createElement("span");
-    meta.textContent = `${formatPrintRequestDate(entry.sentAt)}${entry.tunnelId ? ` · ${entry.tunnelId === "gate1" ? "Gate 1" : "Gate 2"}` : ""}`;
+    meta.textContent = `${formatPrintRequestDate(entry.sentAt)}${entry.fileName ? ` · ${entry.fileName}` : ""}${entry.tunnelId ? ` · ${entry.tunnelId === "gate1" ? "Gate 1" : "Gate 2"}` : ""}`;
     button.append(heading, meta);
     fragment.appendChild(button);
   }
@@ -113,7 +115,8 @@ function renderPrintRequestHistory() {
 }
 
 function printRequestDisplayPrice(entry, item) {
-  const sent = entry.type === "TXT" ? buildHistoryPayloadItem(item) : buildDirectPrintPayloadItem(item);
+  const sent = entry.type === "TXT" ? buildHistoryPayloadItem(item) :
+    entry.type === "TXT Unique" ? buildNamedUniquePayloadItem(item) : buildDirectPrintPayloadItem(item);
   const original = numberFromValue(sent.s_price);
   const discounted = numberFromValue(sent.discount_price);
   const actual = entry.type !== "TXT" && discounted > 0 && discounted < original ? discounted : original;
@@ -126,7 +129,7 @@ function openPrintRequestDetail(id) {
   state.activePrintRequestId = id;
   closePrintDialog();
   state.els.printRequestDetailTitle.textContent = printRequestTypeLabel(entry.type);
-  state.els.printRequestDetailMeta.textContent = `${formatPrintRequestDate(entry.sentAt)} · ${entry.items.length} barcode${entry.items.length === 1 ? "" : "s"}${entry.tunnelId ? ` · ${entry.tunnelId === "gate1" ? "Gate 1" : "Gate 2"}` : ""}`;
+  state.els.printRequestDetailMeta.textContent = `${formatPrintRequestDate(entry.sentAt)} · ${entry.items.length} barcode${entry.items.length === 1 ? "" : "s"}${entry.fileName ? ` · ${entry.fileName}` : ""}${entry.tunnelId ? ` · ${entry.tunnelId === "gate1" ? "Gate 1" : "Gate 2"}` : ""}`;
   state.els.printRequestTunnelSelect.value = state.els.printTunnelSelect.value || "gate1";
   state.els.printRequestTimestampCheckbox.checked = true;
   state.els.printRequestDetailStatus.textContent = "";
@@ -165,14 +168,14 @@ function closePrintRequestDetail(returnToPrint = true) {
 }
 
 function setSavedPrintButtonsDisabled(disabled) {
-  for (const button of [state.els.printRequestTxtBtn, state.els.printRequestBigBtn,
+  for (const button of [state.els.printRequestTxtBtn, state.els.printRequestNamedUniqueBtn, state.els.printRequestBigBtn,
     state.els.printRequestStickerBtn, state.els.printRequestCancelBtn]) {
     button.disabled = disabled;
   }
 }
 
 async function sendSavedPrintRequest(type, confirmedSignature) {
-  if (state.isPrintRequestSending) return;
+  if (state.isPrintRequestSending || state.isWorkerSending) return;
   const entry = state.printRequests.find((item) => item.id === state.activePrintRequestId);
   if (!entry) return;
   const tunnelId = state.els.printRequestTunnelSelect.value;
@@ -209,6 +212,7 @@ async function sendSavedPrintRequest(type, confirmedSignature) {
     }
   }
   state.isPrintRequestSending = true;
+  state.isWorkerSending = true;
   setSavedPrintButtonsDisabled(true);
   state.els.printRequestDetailStatus.textContent = `Sending ${printRequestTypeLabel(type)}...`;
   try {
@@ -231,6 +235,7 @@ async function sendSavedPrintRequest(type, confirmedSignature) {
     setStatus(message);
   } finally {
     state.isPrintRequestSending = false;
+    state.isWorkerSending = false;
     setSavedPrintButtonsDisabled(false);
   }
 }

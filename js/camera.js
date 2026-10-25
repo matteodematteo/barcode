@@ -714,9 +714,13 @@ async function detectBarcodeInFrame(frameTiming = {}) {
   const attempt = state.detectionAttempt || 0;
   // Keep the successful crop for confirmation on the next fresh camera frame.
   const confirming = Boolean(state.pendingConfirmCode && state.lastDetectionPass);
+  // A tight crop can occasionally yield a different checksum-valid retail
+  // code from the same bars. Confirm these codes from the full visible frame.
+  const confirmRetailFromFullFrame = confirming && /^(?:\d{8}|\d{12}|\d{13}|\d{14})$/.test(state.pendingConfirmCode);
   const pass = confirming ? state.lastDetectionPass : makeDetectionPass(attempt);
   const focusTarget = cameraFocusStates.get(state.track)?.scanPoint;
-  const cropMode = confirming && state.lastBarcodeRegion ? "confirm" :
+  const cropMode = confirmRetailFromFullFrame ? "visible" :
+    confirming && state.lastBarcodeRegion ? "confirm" :
     focusTarget && attempt % 2 === 0 ? "target" : pass.mode;
   const drawStarted = performance.now();
   let image = null, videoFrame = null, frameGeometry;
@@ -759,10 +763,10 @@ async function detectBarcodeInFrame(frameTiming = {}) {
     CONFIG.detectorFormats.map((format) => ZXING_FORMAT_MAP[format]).filter(Boolean),
     { thorough: pass.thorough, enhance: pass.enhance, orientation: pass.orientation,
       downscale: pass.mode === "visible", minLineCount: 2,
-      focused: pass.focused, budgetMs: confirming ? 240 : pass.budgetMs, binarizer: pass.binarizer,
+      focused: pass.focused, budgetMs: confirming ? 300 : pass.budgetMs, binarizer: pass.binarizer,
       regionOffset: pass.regionOffset,
       onDiagnostics: (details) => { worker = details; quality ||= details?.framePreparation?.quality; },
-      preferredRegion: confirming && state.lastBarcodeRegion ? {
+      preferredRegion: confirming && !confirmRetailFromFullFrame && state.lastBarcodeRegion ? {
         x: (state.lastBarcodeRegion.x - frameGeometry.sx) * frameGeometry.outputWidth / frameGeometry.sw,
         y: (state.lastBarcodeRegion.y - frameGeometry.sy) * frameGeometry.outputHeight / frameGeometry.sh,
         width: state.lastBarcodeRegion.width * frameGeometry.outputWidth / frameGeometry.sw,
@@ -810,14 +814,14 @@ function makeDetectionPass(attempt) {
   const phase = attempt % 4;
   return {
     mode: getDetectionCropModes()[phase],
-    // Keep dense crop reads for short/distant labels; expensive contrast
-    // retries only run every fourth pass.
+    // Leave enough time for a central label read on slower phones; expensive
+    // contrast and rotation retries still run only every fourth pass.
     thorough: true,
     enhance: phase === 3,
     // Prefer another camera frame after a short attempt; every fourth pass
     // gets more time for angled, faint or distant labels. Confirmation reuses
     // the successful crop and gets time to verify it on the next fresh frame.
-    budgetMs: phase === 3 ? 240 : 60,
+    budgetMs: phase === 3 ? 300 : 120,
     // Periodic whole-preview reads and rotating candidate priority prevent
     // background text from starving another barcode region.
     // Dedicated whole-preview passes also try fixed angles, independent of

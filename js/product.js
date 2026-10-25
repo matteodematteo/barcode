@@ -405,6 +405,9 @@ async function fetchProductInfo(barcode, options) {
         }
         // Sync product fields to matching rows while preserving each quantity.
         syncHistoryRowsWithRecord(state.currentProductRecord, code);
+        if (createdHistoryId && state.selectedHistoryIndex === 0) {
+          requestAnimationFrame(() => revealNewestHistoryItem(createdHistoryId));
+        }
       }
       setStatus("Product info loaded");
     }
@@ -431,6 +434,9 @@ async function fetchProductInfo(barcode, options) {
             product: parsedProduct?.product || parsedProduct,
             sale: parsedDiscount
           });
+          if (createdHistoryId && state.selectedHistoryIndex === 0) {
+            requestAnimationFrame(() => revealNewestHistoryItem(createdHistoryId));
+          }
         }
       });
     return "exact";

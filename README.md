@@ -171,6 +171,17 @@ labelled Saved list. Saved lists survive reloads and can be viewed or printed
 using the same controls as past print requests. Storage failure keeps the current
 list intact. The most recent 20 saved lists and print requests are retained.
 
+Send & Print also offers **Named/Unique** for the current list and for saved
+print requests. Enter a name of up to 120 characters; an existing `.txt` suffix
+is normalized. The export combines records with the same trimmed barcode,
+adding quantities while preserving leading zeroes, case and the first item's
+details. The name without `.txt` becomes the Worker session ID. A successful
+send archives the grouped items as **TXT Unique** with its filename. Sending the
+current list then removes only the records that were in the sent snapshot, so
+new captures remain; sending a saved list leaves the current list untouched.
+Validation, network and local history failures keep the current list intact.
+The most recently captured history row is brought into view when added.
+
 The product editor follows Barcode/Cost, Italian Name, Price/Discount%, and
 Quantity/Discounted Price, with Save on the left and Back on the right. Barcode
 is read-only and skipped by keyboard navigation; Tab and Enter follow the
