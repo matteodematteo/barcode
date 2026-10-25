@@ -38,6 +38,7 @@ function clearResultFields(options) {
     const element = state.fieldEls[key];
     if (element) {
       element.textContent = "";
+      if (typeof desktopProductDetails !== "undefined") desktopProductDetails.fieldChanged(key);
     }
   }
   const compactSupplierField = document.getElementById("field_supplier_name_compact");
@@ -70,6 +71,7 @@ function setResultField(key, value) {
   const element = state.fieldEls[key];
   if (element) {
     element.textContent = normalizedValue;
+    if (typeof desktopProductDetails !== "undefined") desktopProductDetails.fieldChanged(key);
   }
   if (key === "supplier_name") {
     const compactSupplierField = document.getElementById("field_supplier_name_compact");

@@ -113,6 +113,7 @@ function openQuantityCapture(barcode) {
   if (!code || !state.isQuantityEntryUnlocked || state.quantityCaptureOpen) return;
   state.quantityReturnFocus = document.activeElement;
   state.quantityCaptureOpen = true;
+  if (typeof syncSalesPerformanceRequests === "function") syncSalesPerformanceRequests();
   captureDiagnostics.mark("quantity.open");
   state.pendingQuantityCode = code;
   state.quantityReplaceOnDigit = true;
@@ -152,6 +153,7 @@ function closeQuantityCapture(options = {}) {
   document.querySelector("main").inert = state.capturePageOpen;
   document.body.classList.remove("is-entering-quantity");
   updateQuantityPadAvailability();
+  if (!options.keepProductLookup && typeof syncSalesPerformanceRequests === "function") syncSalesPerformanceRequests();
 }
 
 
@@ -285,6 +287,10 @@ function clearResultCardLayout(card) {
 }
 
 
+function isDesktopProductLayout() {
+  return typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1024px)").matches;
+}
+
 function loadProductInfoSlideIndex() {
   try {
     const raw = localStorage.getItem(CONFIG.productInfoSlideStorageKey);
@@ -313,6 +319,8 @@ function initProductInfoSlider() {
   }
 
   const dotButtons = Array.prototype.slice.call(dots.querySelectorAll(".pi-dot"));
+  desktopProductDetails.init();
+  desktopProductDetails.setDesktop(isDesktopProductLayout());
   let targetIndex = null;
   let scrollFrame = 0;
 
@@ -333,6 +341,11 @@ function initProductInfoSlider() {
   }
 
   function goToSlide(index, behavior) {
+    if (isDesktopProductLayout()) {
+      targetIndex = null;
+      slider.scrollTo({ left: 0, behavior: "instant" });
+      return;
+    }
     const width = slider.clientWidth;
     targetIndex = index;
     slider.scrollTo({ left: width * index, behavior: behavior || "smooth" });
@@ -348,6 +361,7 @@ function initProductInfoSlider() {
 
   function syncScrolledPage() {
     scrollFrame = 0;
+    if (isDesktopProductLayout()) return;
     const width = slider.clientWidth;
     if (!width) return;
     // A tapped dot stays selected while smooth scrolling crosses other pages.
@@ -360,6 +374,7 @@ function initProductInfoSlider() {
   }
 
   function queueScrollSync() {
+    if (isDesktopProductLayout()) return;
     if (!scrollFrame) scrollFrame = window.requestAnimationFrame(syncScrolledPage);
   }
   slider.addEventListener("scroll", queueScrollSync, { passive: true });
@@ -378,9 +393,23 @@ function initProductInfoSlider() {
 
   const savedIndex = Math.min(dotButtons.length - 1, Math.max(0, loadProductInfoSlideIndex()));
   setActiveDot(savedIndex, true);
-  if (savedIndex > 0) {
+  function syncProductLayout() {
+    targetIndex = null;
+    if (scrollFrame) window.cancelAnimationFrame(scrollFrame);
+    scrollFrame = 0;
+    const desktop = isDesktopProductLayout();
+    desktopProductDetails.setDesktop(desktop);
+    state.els.productActivitySlide?.setAttribute("role", desktop ? "group" : "tabpanel");
+    if (desktop) slider.scrollTo({ left: 0, behavior: "instant" });
+    else window.requestAnimationFrame(function () { goToSlide(state.productInfoSlideIndex, "instant"); });
+    if (typeof syncSalesPerformanceRequests === "function") syncSalesPerformanceRequests();
+  }
+  const desktopQuery = typeof window.matchMedia === "function" ? window.matchMedia("(min-width: 1024px)") : null;
+  desktopQuery?.addEventListener("change", syncProductLayout);
+  if (isDesktopProductLayout()) syncProductLayout();
+  else if (savedIndex > 0) {
     window.requestAnimationFrame(function () {
-      goToSlide(savedIndex, "auto");
+      goToSlide(savedIndex, "instant");
     });
   }
 }

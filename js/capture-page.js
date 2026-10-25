@@ -85,7 +85,7 @@ function loadCaptureEngine() {
   captureEnginePromise = new Promise(function (resolve, reject) {
     captureDiagnostics.event("captureBundle.loading");
     const script = document.createElement("script");
-    script.src = "js/capture.bundle.js?v=157";
+    script.src = "js/capture.bundle.js?v=159";
     script.onload = function () {
       captureEngineLoaded = true;
       captureDiagnostics.mark("captureBundle.ready");
@@ -106,6 +106,7 @@ function loadCaptureEngine() {
 async function openCapturePage() {
   if (state.capturePageOpen) return;
   state.capturePageOpen = true;
+  if (typeof syncSalesPerformanceRequests === "function") syncSalesPerformanceRequests();
   state.captureFirstFrameMarked = false;
   const generation = ++state.captureGeneration;
   // Begin the hardware request before focus/layout work in the capture route.
@@ -179,6 +180,7 @@ function closeCapturePage(options) {
   const focus = state.captureReturnFocus;
   if (focus?.isConnected && !focus.disabled) focus.focus({ preventScroll: true });
   else state.els.scanBtn.focus({ preventScroll: true });
+  if (!options?.captured && typeof syncSalesPerformanceRequests === "function") syncSalesPerformanceRequests();
 }
 
 function initCapturePage() {

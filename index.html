@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f5f6f2" />
-  <meta name="webscanner-version" content="157" />
+  <meta name="webscanner-version" content="159" />
   <script>
     // Keep update discovery independent of the cached application bundle.
     // The worker URL stays stable; its own update checks bypass HTTP caching.
@@ -24,12 +24,12 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Web Scanner" />
-  <link rel="manifest" href="manifest.webmanifest?v=157" />
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=157" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=157" />
+  <link rel="manifest" href="manifest.webmanifest?v=159" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=159" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=159" />
   <title>Web Barcode Scanner</title>
-  <link rel="preload" href="js/app.bundle.js?v=157" as="script" />
-  <link rel="preload" href="css/interface.bundle.css?v=157" as="style" />
+  <link rel="preload" href="js/app.bundle.js?v=159" as="script" />
+  <link rel="preload" href="css/interface.bundle.css?v=159" as="style" />
   <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
        round-trips for the above-the-fold shell (base + scanner + layout +
        essential components). The remaining interface styles load as one small sheet below. -->
@@ -360,13 +360,13 @@
   <!-- These sheets affect the visible page geometry. Keep them render-blocking so
        browsers paint the completed interface once instead of restyling sections
        progressively on a slow connection. -->
-  <link rel="stylesheet" href="css/interface.bundle.css?v=157" />
+  <link rel="stylesheet" href="css/interface.bundle.css?v=159" />
 </head>
 <body>
   <main class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=157" width="34" height="34" alt="" decoding="async" /></span>
+        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=159" width="34" height="34" alt="" decoding="async" /></span>
         <div><h1>Web Scanner</h1></div>
       </div>
       <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
@@ -389,7 +389,7 @@
   </button></nav>
     </header>
 
-    <section class="card">
+    <section class="card" id="productCard">
       <div class="section-heading"><h2>Product</h2></div>
       <div class="controls">
         <div class="lookup-row">
@@ -407,7 +407,24 @@
       <div class="product-details" id="productInfoSection" aria-label="Product details">
       <div class="pi-slider" id="productInfoSlider">
         <div class="pi-track" id="productInfoTrack">
+          <div id="desktopProductDetails" hidden>
+            <section class="desktop-product-group" aria-label="Product details">
+              <div class="desktop-product-row" data-product-slot="name"></div>
+              <div class="desktop-product-row desktop-product-row--split" data-product-slot="spec-stock"></div>
+            </section>
+            <section class="desktop-product-group" aria-labelledby="desktopPurchaseTitle">
+              <h3 class="desktop-product-heading" id="desktopPurchaseTitle">Purchase price</h3>
+              <div class="desktop-product-row desktop-product-row--split" data-product-slot="supplier-cost"></div>
+              <div class="desktop-product-row desktop-product-row--costs" data-product-slot="costs"></div>
+            </section>
+            <section class="desktop-product-group" aria-labelledby="desktopSellingTitle">
+              <h3 class="desktop-product-heading" id="desktopSellingTitle">Selling price</h3>
+              <div class="desktop-product-row desktop-product-row--selling" data-product-slot="selling"></div>
+            </section>
+            <div class="desktop-sales-summary" data-product-slot="sales-summary"></div>
+          </div>
           <div class="pi-slide" data-slide-index="0">
+            <h3 class="product-group-title">Price and stock</h3>
             <div class="pi-row">
               <div class="field-card pi-w-60" id="field_goods_code_card"><label for="field_goods_code">Goods Code</label><div class="field-value" id="field_goods_code"></div></div>
               <div class="field-card pi-w-40" id="field_real_inventory_card"><label for="field_real_inventory">Inventory</label><div class="field-value" id="field_real_inventory"></div></div>
@@ -419,6 +436,7 @@
             </div>
           </div>
           <div class="pi-slide" data-slide-index="1">
+            <h3 class="product-group-title">Purchase and supplier</h3>
             <div class="pi-row">
               <div class="field-card pi-w-60" id="field_supplier_name_card"><label for="field_supplier_name">Supplier</label><div class="field-value" id="field_supplier_name"></div></div>
               <div class="field-card pi-w-40" id="field_discount_percent_card"><label for="field_discount_percent">Discount%</label><div class="field-value is-discount" id="field_discount_percent"></div></div>
@@ -430,6 +448,7 @@
             </div>
           </div>
           <div class="pi-slide" data-slide-index="2">
+            <h3 class="product-group-title">Product details</h3>
             <div class="pi-row">
               <div class="field-card pi-w-70" id="field_italian_name_card"><label for="field_italian_name">Italian Name</label><div class="field-value" id="field_italian_name"></div></div>
               <div class="field-card pi-w-30" id="field_spec_card"><label for="field_spec">Spec</label><div class="field-value" id="field_spec"></div></div>
@@ -441,6 +460,7 @@
             </div>
           </div>
           <div class="pi-slide activity-slide" data-slide-index="3" id="productActivitySlide" role="tabpanel" aria-label="Sales and inventory" aria-busy="false">
+            <h3 class="product-group-title">Sales and inventory</h3>
             <span class="sales-loader activity-loader" id="productActivityLoader" role="status" aria-label="Loading sales and inventory" hidden></span>
             <div class="field-card activity-row">
               <div class="activity-periods">
@@ -478,7 +498,7 @@
 
 
 
-    <section class="card section-card">
+    <section class="card section-card" id="historyCard">
       <div class="history-head">
         <h2 id="historyTitle">Capture List</h2>
         <span class="history-count" id="historyCountBadge" aria-live="polite">[0]</span>
@@ -785,6 +805,6 @@
     <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
   </div>
   <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
-  <script src="js/app.bundle.js?v=157" defer></script>
+  <script src="js/app.bundle.js?v=159" defer></script>
 </body>
 </html>

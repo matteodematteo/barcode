@@ -250,9 +250,13 @@ function restoreSalesPeriodFromSavedRequest() {
 
 
 function isSalesTabActive(index) {
-  if (state.productInfoSlideIndex !== index ||
+  if (state.capturePageOpen || state.quantityCaptureOpen ||
       state.els?.productInfoSection?.hidden ||
       (typeof document !== "undefined" && document.hidden)) return false;
+  // The desktop product card shows every slide together. Their data must
+  // load even when a different mobile slide was selected before resizing.
+  if (isDesktopProductLayout()) return true;
+  if (state.productInfoSlideIndex !== index) return false;
   const slider = state.els?.productInfoSlider;
   // A clicked dot can change selection before the slide finishes moving.
   // Mobile scroll snapping and fractional slide widths need a visual-page
@@ -295,12 +299,13 @@ function syncSalesPerformanceRequests(options = {}) {
     renderSalesQuantity();
   }
   // Keep failures visible on tab re-entry; only Apply or explicit Refresh retries.
-  if (options.refresh && state.productInfoSlideIndex === 2 && !state.salesError) {
+  const desktop = isDesktopProductLayout();
+  if (options.refresh && (desktop || state.productInfoSlideIndex === 2) && !state.salesError) {
     state.hasSalesResult = false;
     state.salesError = false;
     state.salesQuantityTotal = null;
   }
-  if (options.refresh && state.productInfoSlideIndex === 3 && !state.productActivityError) {
+  if (options.refresh && (desktop || state.productInfoSlideIndex === 3) && !state.productActivityError) {
     state.productActivityTotals = null;
     state.productActivityError = "";
   }
@@ -314,10 +319,12 @@ function syncSalesPerformanceRequests(options = {}) {
     cancelProductActivityLookup();
   }
   if (!code) return;
+  const requests = [];
   if (salesActive && !state.isSalesLoading && !state.hasSalesResult && !state.salesError) {
-    return startSalesPerformanceLookup(code);
+    requests.push(startSalesPerformanceLookup(code));
   }
-  if (activityActive) return startProductActivityLookup();
+  if (activityActive) requests.push(startProductActivityLookup());
+  if (requests.length) return Promise.all(requests);
 }
 
 

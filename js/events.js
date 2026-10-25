@@ -327,7 +327,9 @@ function bindDeferredEvents() {
     try {
       const cookie = await loginAndRefreshCookie();
       if (cookie) {
-        if (isSalesTabActive(0)) {
+        if (isDesktopProductLayout()) {
+          await Promise.all([refreshMissingHistoryInfo(cookie), refreshSalesPerformanceAfterLogin(cookie)]);
+        } else if (isSalesTabActive(0)) {
           await refreshMissingHistoryInfo(cookie);
         } else {
           await refreshSalesPerformanceAfterLogin(cookie);

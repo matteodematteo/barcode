@@ -142,6 +142,20 @@ Cancel aborts the lookup; late responses cannot change another pending capture.
 Missing/offline product details leave the keypad usable. In landscape, details
 and quantity share a row above the keypad so Enter stays visible.
 
+Desktop layouts (1024 px and wider) show the product details in the left card,
+with the capture list in the right column. Italian name comes first, followed
+by Spec/Inventory and Supplier/Cost rows split 67/33. Cost Discounts, Net Cost,
+and +IVA 22% use 40/30/30; selling price, discount and discounted price share
+three equal columns under the Selling price heading. The repeated barcode
+display is hidden on desktop; the barcode entry remains available. Long names
+can wrap, while other values and labels shrink to fit one line. Desktop prices
+show euros and two decimals. Resizing back restores the mobile fields, labels
+and price formatting without duplicating controls. Sales and inventory load together while the product
+card is visible; capture and quantity entry suspend those requests. The desktop
+quantity sheet aligns with the history column and has the same width. Smaller
+screens retain product-page swiping and a full-width quantity sheet. Other
+dialogs retain their existing layout.
+
 Confirming Clear list first stores a full snapshot in Recent print requests,
 labelled Saved list. Saved lists survive reloads and can be viewed or printed
 using the same controls as past print requests. Storage failure keeps the current
@@ -212,6 +226,10 @@ reloads and first-frame ordering when reusing a live camera.
 rounding, and dedicated sale-discount priority. `node tests/test_quantity_product.cjs`
 checks the keypad details, responsive layout, request reuse, cancellation,
 stale results, zero/missing prices and offline entry in the browser.
+`node tests/test_desktop_sales.cjs` verifies concurrent desktop data loading,
+visibility, caching and cancellation. `node tests/test_desktop_layout.cjs`
+checks the desktop columns, all product groups, keypad alignment, mobile
+swiping, saved selection through resizing, and existing popup sizes.
 
 With the local server running, install the optional test dependency and run:
 

@@ -1,0 +1,77 @@
+/* Mobile keeps the swipeable product pages and full-width quantity sheet. */
+.product-group-title { display: none; }
+#desktopProductDetails { display: none; }
+
+@media (min-width: 1024px) {
+  .app-shell {
+    width: min(1480px, calc(100% - 48px));
+    max-width: 1480px;
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 20px;
+    padding-top: 20px;
+  }
+  .app-header { grid-column: 1 / -1; margin-bottom: 0; }
+  .brand h1 { font-size: 1.35rem; }
+  #productCard, #historyCard { min-width: 0; padding: 18px; }
+  #productCard { grid-column: 1; }
+  #historyCard { grid-column: 2; margin-top: 0; }
+  .section-heading h2, .history-head h2 { font-size: 1.05rem; }
+  #productInfoSection { margin-top: 16px; }
+  #productInfoSlider { overflow: visible; scroll-snap-type: none; touch-action: auto; }
+  #productInfoTrack { display: grid; gap: 14px; }
+  #productInfoTrack > .pi-slide { min-width: 0; width: 100%; scroll-snap-align: none; }
+  #productInfoTrack > .pi-slide + .pi-slide { border-top: 1px solid var(--panel-line); padding-top: 14px; }
+  #productInfoDots { display: none; }
+  #productInfoTrack > .pi-slide:not(.activity-slide) { display: none; }
+  #productInfoTrack > #desktopProductDetails { display: grid; gap: 14px; min-width: 0; }
+  #desktopProductDetails .desktop-product-group { display: grid; gap: 8px; min-width: 0; }
+  #desktopProductDetails .desktop-product-heading { margin: 0; padding-top: 10px; border-top: 1px solid var(--panel-line); color: #536b60; font-size: 11px; font-weight: 700; line-height: 1.4; letter-spacing: .065em; text-transform: uppercase; }
+  .desktop-product-row { display: grid; min-width: 0; gap: 10px; }
+  .desktop-product-row--split { grid-template-columns: minmax(0, 67fr) minmax(0, 33fr); }
+  .desktop-product-row--costs { grid-template-columns: minmax(0, 4fr) minmax(0, 3fr) minmax(0, 3fr); }
+  .desktop-product-row--selling { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  #desktopProductDetails .desktop-product-group .field-card { display: block; min-width: 0; width: auto; max-width: none; margin: 0; padding: 9px 11px; background: #f7f9f6; border: 1px solid #e6ece7; border-radius: 9px; }
+  #desktopProductDetails .desktop-product-group .field-card label { display: block; width: 100%; margin: 0 0 5px; color: var(--muted); font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none; line-height: 1.3; white-space: nowrap; overflow: hidden; }
+  #desktopProductDetails .desktop-product-group .field-value { font-size: 15px; line-height: 1.4; font-weight: 650; min-height: 0; }
+  #desktopProductDetails .desktop-product-group .field-value:not(#field_italian_name) { white-space: nowrap; overflow: hidden; text-overflow: clip; word-break: normal; overflow-wrap: normal; }
+  #desktopProductDetails .desktop-product-group .price-card-heading { margin: 0; }
+  #desktopProductDetails .desktop-product-row--selling .field-value { font-size: 20px; font-weight: 750; font-variant-numeric: tabular-nums; }
+  #desktopProductDetails #field_discount_price_card { background: #fcf2f2; border-color: #f4e2e3; }
+  #desktopProductDetails #field_disc_price_percent { color: #b42318; }
+  #desktopProductDetails #field_discount_price_card[hidden], #desktopProductDetails #field_disc_price_percent_card[hidden] { display: block !important; }
+  .product-group-title {
+    display: block;
+    margin: 0 0 8px;
+    color: #52665d;
+    font-size: 12px;
+    line-height: 1.3;
+    font-weight: 650;
+  }
+  #productCard .pi-row { gap: 8px; }
+  #productCard .pi-row + .pi-row { margin-top: 8px; }
+  #productCard .field-card { padding: 8px 10px; }
+  #productCard .field-value { font-size: 14px; white-space: normal; overflow-wrap: anywhere; }
+  #productCard .field-card label { font-size: 10px; }
+  #productCard .activity-periods { gap: 10px; }
+  #productCard .activity-periods > div { min-width: 0; }
+  #productCard .activity-periods label { font-size: 10px; white-space: normal; }
+  #productCard .activity-row + .activity-row { margin-top: 8px; }
+  #productCard .activity-loader { top: 1px; right: 0; }
+  #productCard .activity-error { position: static; margin: 8px 0; padding: 8px; border-radius: 8px; }
+  #productCard .activity-retry { position: static; margin-top: 4px; }
+  #historyCard .history-list { max-height: calc(100dvh - 258px); overflow-y: auto; overscroll-behavior: contain; }
+  #historyCard .history-list.is-locked-scroll { padding-bottom: 12px; scroll-padding-bottom: 12px; }
+
+  /* Use the same shell, gap, and column ratio as the history card above. */
+  #quantityPadCard { display: block; }
+  #quantityPadCard .quantity-capture-card {
+    position: absolute;
+    right: max(24px, calc((100% - 1480px) / 2));
+    bottom: 0;
+    width: calc((min(1480px, calc(100% - 48px)) - 20px) / 2.15);
+    max-height: calc(100dvh - 24px);
+    display: block;
+  }
+}
