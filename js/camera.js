@@ -712,12 +712,14 @@ async function detectBarcodeInFrame(frameTiming = {}) {
   const focusRevision = state.focusTargetRevision || 0;
   const detector = await createDetector();
   const attempt = state.detectionAttempt || 0;
+  if (state.pendingConfirmCode && performance.now() - state.pendingConfirmAt > 1200) resetBarcodeConfirmation();
   // Keep the successful crop for confirmation on the next fresh camera frame.
   const confirming = Boolean(state.pendingConfirmCode && state.lastDetectionPass);
   // A tight crop can occasionally yield a different checksum-valid retail
   // code from the same bars. Confirm these codes from the full visible frame.
   const confirmRetailFromFullFrame = confirming && /^(?:\d{8}|\d{12}|\d{13}|\d{14})$/.test(state.pendingConfirmCode);
-  const pass = confirming ? state.lastDetectionPass : makeDetectionPass(attempt);
+  const pass = confirming ? { ...state.lastDetectionPass, orientation: "auto", focused: true,
+    binarizer: "LocalAverage", enhance: false, regionOffset: attempt } : makeDetectionPass(attempt);
   const focusTarget = cameraFocusStates.get(state.track)?.scanPoint;
   const cropMode = confirmRetailFromFullFrame ? "visible" :
     confirming && state.lastBarcodeRegion ? "confirm" :
@@ -762,11 +764,17 @@ async function detectBarcodeInFrame(frameTiming = {}) {
     text = await detector.detect(videoFrame ? { videoFrame, geometry: frameGeometry, sampleQuality } : image,
     CONFIG.detectorFormats.map((format) => ZXING_FORMAT_MAP[format]).filter(Boolean),
     { thorough: pass.thorough, enhance: pass.enhance, orientation: pass.orientation,
-      downscale: pass.mode === "visible", minLineCount: 2,
+      downscale: pass.mode === "visible", minLineCount: confirmRetailFromFullFrame ? 4 : 2,
       focused: pass.focused, budgetMs: confirming ? 300 : pass.budgetMs, binarizer: pass.binarizer,
       regionOffset: pass.regionOffset,
       onDiagnostics: (details) => { worker = details; quality ||= details?.framePreparation?.quality; },
       preferredRegion: confirming && !confirmRetailFromFullFrame && state.lastBarcodeRegion ? {
+        x: (state.lastBarcodeRegion.x - frameGeometry.sx) * frameGeometry.outputWidth / frameGeometry.sw,
+        y: (state.lastBarcodeRegion.y - frameGeometry.sy) * frameGeometry.outputHeight / frameGeometry.sh,
+        width: state.lastBarcodeRegion.width * frameGeometry.outputWidth / frameGeometry.sw,
+        height: state.lastBarcodeRegion.height * frameGeometry.outputHeight / frameGeometry.sh
+      } : null,
+      verificationRegion: confirmRetailFromFullFrame && state.lastBarcodeRegion ? {
         x: (state.lastBarcodeRegion.x - frameGeometry.sx) * frameGeometry.outputWidth / frameGeometry.sw,
         y: (state.lastBarcodeRegion.y - frameGeometry.sy) * frameGeometry.outputHeight / frameGeometry.sh,
         width: state.lastBarcodeRegion.width * frameGeometry.outputWidth / frameGeometry.sw,
@@ -804,7 +812,7 @@ async function detectBarcodeInFrame(frameTiming = {}) {
   if (focusRevision !== (state.focusTargetRevision || 0)) return "";
   if (session === state.scanSession) {
     state.detectionAttempt = attempt + 1;
-    state.lastDetectionPass = text ? pass : null;
+    state.lastDetectionPass = text ? pass : confirming ? state.lastDetectionPass : null;
   }
   return text;
 }
@@ -939,11 +947,25 @@ function wasRecentlyDetected(detectedText) {
 }
 
 
+function resetBarcodeConfirmation() {
+  state.pendingConfirmCode = "";
+  state.pendingConfirmCount = 0;
+  state.pendingConfirmAt = 0;
+  state.pendingConfirmMisses = 0;
+}
+
 function confirmAcrossFrames(detectedText) {
   const code = String(detectedText || "").trim();
+  const now = performance.now();
+  if (state.pendingConfirmCode && now - state.pendingConfirmAt > 1200) resetBarcodeConfirmation();
   if (!code) {
-    state.pendingConfirmCode = "";
-    state.pendingConfirmCount = 0;
+    if (state.pendingConfirmCode && state.pendingConfirmMisses < 2) {
+      state.pendingConfirmMisses += 1;
+      captureDiagnostics.event("barcode.confirmationRetained", { missedFrames: state.pendingConfirmMisses,
+        ageMs: Math.round(now - state.pendingConfirmAt) });
+      return false;
+    }
+    resetBarcodeConfirmation();
     return false;
   }
 
@@ -953,11 +975,12 @@ function confirmAcrossFrames(detectedText) {
     if (state.pendingConfirmCode) captureDiagnostics.event("barcode.confirmationChanged");
     state.pendingConfirmCode = code;
     state.pendingConfirmCount = 1;
+    state.pendingConfirmAt = now;
   }
+  state.pendingConfirmMisses = 0;
 
   if (state.pendingConfirmCount >= 2) {
-    state.pendingConfirmCode = "";
-    state.pendingConfirmCount = 0;
+    resetBarcodeConfirmation();
     return true;
   }
 
@@ -1009,7 +1032,7 @@ async function captureAttempt(session) {
       requestFocusRefresh(state.track, { force: true }).catch(() => {});
     }
     // Keep scanning fresh 1080p frames with the next crop/detail pass.
-    setStatus("Scanning barcode…");
+    setStatus(state.pendingConfirmCode ? "Confirming code…" : "Scanning barcode…");
     return false;
   }
 
@@ -1233,8 +1256,7 @@ async function requestFocusRefresh(track, options = {}) {
     focus.manualPoint = true;
     if (options.point) focus.scanPoint = { x: options.point.x, y: options.point.y };
     state.focusTargetRevision = (state.focusTargetRevision || 0) + 1;
-    state.pendingConfirmCode = "";
-    state.pendingConfirmCount = 0;
+    resetBarcodeConfirmation();
     state.lastBarcodeRegion = null;
     state.lastDetectionPass = null;
     state.detectionAttempt = 0;
@@ -1680,8 +1702,7 @@ function stopScanning(keepStatusMessage) {
   state.lastBarcodeRegion = null;
   cleanupScanTimer();
   state.isScanning = false;
-  state.pendingConfirmCode = "";
-  state.pendingConfirmCount = 0;
+  resetBarcodeConfirmation();
   updateScanButton();
   updateModePill();
   if (!keepStatusMessage) {

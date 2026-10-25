@@ -117,14 +117,20 @@ cluttered backgrounds. Barcode regions are located again on each frame;
 enlargement, rotation and lighting correction prefer those small regions.
 Whole-preview reads still cover larger labels and background clutter. Optional
 fallbacks share one budget per frame, including candidate location: most attempts
-allow 60 ms, with 240 ms every fourth attempt and when confirming a read.
+allow 120 ms, with 300 ms every fourth attempt and when confirming a read.
 Budget expiry skips further retries so capture can use a newer frame. A running
 WASM read or pixel transform finishes before yielding, so these are retry budgets
-rather than hard capture-time limits. Scheduled angle passes run before candidate
-search to preserve difficult angled reads. Successful ordinary reads skip extra work.
+rather than hard capture-time limits. Central barcode strips are checked before
+background candidates, and periodic angle passes cover difficult tilted reads.
+Successful ordinary reads skip extra work.
 Android and iPhone share the same typed-array implementation, without requiring
 OffscreenCanvas or native BarcodeDetector. Capture keeps its 1080p stream and
 requires two matching fresh frames before returning to the main page.
+Confirmation retains a first read for at most 1.2 seconds and two missed frames;
+a conflicting barcode starts a new confirmation. Retail confirmation checks the
+full preview, then revisits the decoded position before searching background
+text. Local verification requires four matching scan rows or agreement between
+two differently sized crops on the second fresh frame.
 
 Capture status labels stay compact in a fixed-height, single-line footer.
 Their font scales with viewport width; full diagnostic text remains in the
@@ -154,7 +160,7 @@ and quantity share a row above the keypad so Enter stays visible.
 
 Desktop layouts (1024 px and wider) show the product details in the left card,
 with the capture list in the right column. Italian name comes first, followed
-by Spec/Inventory and Supplier/Cost rows split 67/33. Cost Discounts, Net Cost,
+by Spec/Inventory split 67/33 and Cost/Supplier split 33/67. Cost Discounts, Net Cost,
 and +IVA 22% use 40/30/30; selling price, discount and discounted price share
 three equal columns under the Selling price heading. The repeated barcode
 display is hidden on desktop; the barcode entry remains available. Long names

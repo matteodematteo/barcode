@@ -6,7 +6,7 @@
   let worker = null;
   let pending = null;
   let sequence = 0;
-  const workerUrl = new URL("zxing-worker.js?v=162", document.currentScript.src);
+  const workerUrl = new URL("zxing-worker.js?v=163", document.currentScript.src);
 
   window.ensureZXingLoaded = function () {
     if (readyPromise) return readyPromise;
@@ -66,6 +66,7 @@
                     diagnostics: typeof options.onDiagnostics === "function",
                     regionOffset: options.regionOffset || 0,
                     preferredRegion: options.preferredRegion || null,
+                    verificationRegion: options.verificationRegion || null,
                     binarizer: options.binarizer || "LocalAverage" }, [image.videoFrame || image.data.buffer]);
                 } catch (error) {
                   if (image.videoFrame) {

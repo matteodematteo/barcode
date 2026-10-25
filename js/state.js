@@ -107,4 +107,6 @@ const state = {
     historyEditDirty: false,
     pendingConfirmCode: "",
     pendingConfirmCount: 0,
+    pendingConfirmAt: 0,
+    pendingConfirmMisses: 0,
   };

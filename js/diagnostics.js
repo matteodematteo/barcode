@@ -384,7 +384,9 @@ const captureDiagnostics = (() => {
         transferBytes: item.transferSize, encodedBytes: item.encodedBodySize, startMs: round(item.startTime) }));
     const data = { schemaVersion: 1, app: "Web Scanner", appVersion: document.querySelector('meta[name="webscanner-version"]')?.content,
       exportedAt: new Date().toISOString(), timeUnits: "milliseconds", limits, pageClock, storage: { ...storageState },
-      decoder: { name: "ZXing WASM", version: "3.1.5", formats: CONFIG.detectorFormats, confirmationFrames: 2 },
+      decoder: { name: "ZXing WASM", version: "3.1.5", formats: CONFIG.detectorFormats, confirmationFrames: 2,
+        confirmationWindowMs: 1200, confirmationAllowedMisses: 2,
+        retailConfirmationEvidence: ["four-matching-lines", "two-crop-contexts"] },
       measurementNotes: ["Focus-command completion is not physical lens convergence; the browser does not expose a reliable autofocus-complete signal.",
         "Image contrast and Laplacian variance are sampled scene-dependent estimates, not proof of focus or barcode legibility.",
         "Decoder budgets limit retries, not an already-running WASM read. Capture atMs values are relative to captureStartedAtMs in that capture's pageClock.",

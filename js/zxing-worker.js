@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=162");
+importScripts("capture-frame-worker.js?v=163");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -495,6 +495,42 @@ async function readBarcodeStrip(pixels, rect, options, deadline) {
   return results.some(isAcceptedBarcode) ? offsetBarcodePositions(results, rect) : [];
 }
 
+async function verifyRetailRegion(pixels, region, options, deadline) {
+  const weakReads = [];
+  for (const [marginX, marginY] of [[0.25, 0.35], [0.45, 0.5]]) {
+    if (performance.now() >= deadline) break;
+    const px = Math.max(48, region.width * marginX);
+    const py = Math.max(48, region.width * marginY, region.height * 1.5);
+    const x = Math.max(0, Math.floor(region.x - px)), y = Math.max(0, Math.floor(region.y - py));
+    const rect = { x, y,
+      width: Math.min(pixels.width, Math.ceil(region.x + region.width + px)) - x,
+      height: Math.min(pixels.height, Math.ceil(region.y + region.height + py)) - y };
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    const crop = cropBarcodePixels(pixels, rect);
+    if (weakReads.some(read => read && ["x", "y", "width", "height"].every(key => read.rect[key] === rect[key]))) continue;
+    const strong = await readDiagnosticBarcodes(crop, { ...options, minLineCount: Math.max(4, options.minLineCount || 2) });
+    if (strong.some(isAcceptedBarcode)) {
+      if (frameDiagnostics) frameDiagnostics.verificationEvidence = "four-lines";
+      return offsetBarcodePositions(strong, rect);
+    }
+    if (performance.now() >= deadline) break;
+    // Short/tilted bars may supply only two matching rows. Accept that local
+    // read only when a second, wider context agrees on this fresh frame.
+    const weak = await decodeBarcodePixels(crop, { ...options, minLineCount: 2 },
+      { orientation: "auto", thorough: true, enhance: false }, deadline);
+    const accepted = weak.find(isAcceptedBarcode);
+    weakReads.push(accepted ? { result: accepted, rect } : null);
+  }
+  if (weakReads.length === 2 && weakReads.every(Boolean) &&
+      weakReads[0].result.text === weakReads[1].result.text && weakReads[0].result.format === weakReads[1].result.format) {
+    if (frameDiagnostics) frameDiagnostics.verificationEvidence = "two-contexts";
+    return offsetBarcodePositions([weakReads[0].result], weakReads[0].rect);
+  }
+  if (frameDiagnostics) frameDiagnostics.verificationEvidence = weakReads.every(Boolean) && weakReads.length === 2
+    ? "conflict" : "incomplete";
+  return [];
+}
+
 async function readBarcodePixels(pixels, options, deadline = Infinity) {
   if (performance.now() >= deadline) return [];
   const initialOptions = options.binarizer === "FixedThreshold"
@@ -661,6 +697,16 @@ self.onmessage = async ({ data }) => {
       // produce a different, checksum-valid EAN-13 from the same bars.
       if (frameDiagnostics) frameDiagnostics.stage = "full-frame-quick";
       results = await readDiagnosticBarcodes(pixels, quick);
+      const verification = data.verificationRegion;
+      if (!results.some(isAcceptedBarcode) && performance.now() < deadline && verification &&
+          [verification.x, verification.y, verification.width, verification.height].every(Number.isFinite) &&
+          verification.width > 0 && verification.height > 0) {
+        // Keep full preview context available, but revisit a valid first read
+        // before background candidates. Four matching rows reject the thin
+        // crop misread found in the supplied EAN-13 label photos.
+        if (frameDiagnostics) frameDiagnostics.stage = "retail-verification-region";
+        results = await verifyRetailRegion(pixels, verification, dense, deadline);
+      }
       let globalStrips = [];
       if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
         // Search the aimed center band first. A small retail label should not
@@ -669,7 +715,12 @@ self.onmessage = async ({ data }) => {
         const bandY = Math.floor(pixels.height * 0.35);
         const bandHeight = Math.ceil(pixels.height * 0.3);
         const band = cropBarcodePixels(pixels, { x: 0, y: bandY, width: pixels.width, height: bandHeight });
-        const centerStrips = findBarcodeStrips(band).map((rect) => ({ ...rect, y: rect.y + bandY }));
+        // Dense rows in this small band are cheap and find short barcodes
+        // even when text/packaging defeats the edge locator's ranking.
+        results = await readDiagnosticBarcodes(band, dense);
+        if (results.some(isAcceptedBarcode)) results = offsetBarcodePositions(results, { x: 0, y: bandY });
+        const centerStrips = !results.some(isAcceptedBarcode) && performance.now() < deadline
+          ? findBarcodeStrips(band).map((rect) => ({ ...rect, y: rect.y + bandY })) : [];
         if (frameDiagnostics) {
           frameDiagnostics.centerStrips = centerStrips.length;
           frameDiagnostics.priorityStrips = centerStrips.slice(0, 3).map(({ x, y, width, height, edges }) =>
@@ -829,13 +880,14 @@ self.onmessage = async ({ data }) => {
       results = await decodeBarcodePixels(pixels, options, data, deadline);
     }
     const result = results.find(isAcceptedBarcode);
-    if (data.trackRegions && result?.position) {
+    let decodedRegion = null;
+    if (result?.position) {
       const points = Object.values(result.position);
       if (points.length === 4 && points.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))) {
         const x = Math.min(...points.map((p) => p.x)), y = Math.min(...points.map((p) => p.y));
         const right = Math.max(...points.map((p) => p.x)), bottom = Math.max(...points.map((p) => p.y));
-        self.postMessage({ id: data.id, type: "region",
-          region: { x, y, width: Math.max(1, right - x), height: Math.max(1, bottom - y) } });
+        decodedRegion = { x, y, width: Math.max(1, right - x), height: Math.max(1, bottom - y) };
+        if (data.trackRegions) self.postMessage({ id: data.id, type: "region", region: decodedRegion });
       }
     }
     if (!result && focusTarget && data.assistCamera) {
@@ -852,6 +904,7 @@ self.onmessage = async ({ data }) => {
     if (diagnostics) {
       diagnostics.format = result?.format || null;
       diagnostics.candidateRegion = focusTarget;
+      diagnostics.decodedRegion = decodedRegion;
       diagnostics.readsTruncated = diagnostics.wasmCalls > diagnostics.reads.length;
     }
     self.postMessage({ id: data.id, text, diagnostics });

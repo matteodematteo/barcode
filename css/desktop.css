@@ -30,6 +30,7 @@
   #desktopProductDetails .desktop-product-heading { margin: 0; padding-top: 10px; border-top: 1px solid var(--panel-line); color: #536b60; font-size: 11px; font-weight: 700; line-height: 1.4; letter-spacing: .065em; text-transform: uppercase; }
   .desktop-product-row { display: grid; min-width: 0; gap: 10px; }
   .desktop-product-row--split { grid-template-columns: minmax(0, 67fr) minmax(0, 33fr); }
+  [data-product-slot="supplier-cost"] { grid-template-columns: minmax(0, 33fr) minmax(0, 67fr); }
   .desktop-product-row--costs { grid-template-columns: minmax(0, 4fr) minmax(0, 3fr) minmax(0, 3fr); }
   .desktop-product-row--selling { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   #desktopProductDetails .desktop-product-group .field-card { display: block; min-width: 0; width: auto; max-width: none; margin: 0; padding: 9px 11px; background: #f7f9f6; border: 1px solid #e6ece7; border-radius: 9px; }
