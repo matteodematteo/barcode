@@ -58,9 +58,14 @@ on Capture also warms the decoder without opening hardware.
 The camera requests continuous autofocus when available and configures the lens
 as soon as playback starts, without waiting for the decoder. Tap or click the
 preview to select a focus point; a yellow target marks the selected location.
-Taps trigger a single autofocus sweep at the selected point where supported,
-without a delayed switch to another focus mode. Other cameras keep continuous
-focus aimed at the point. The next capture restores continuous autofocus.
+Taps request a single autofocus sweep at the selected point where supported.
+When single-shot is rejected or the camera still reports continuous mode, the
+app remembers that limitation. If manual mode is supported, it briefly switches
+through manual focus for 65 ms, then restores continuous autofocus at the point.
+This restarts AF instead of only reapplying its current mode. Any seed distance
+stays inside the reported lens range; it is removed when autofocus resumes.
+Cancellation also restores autofocus on a reused stream. Other cameras use the
+available continuous-focus controls. The next capture restores center autofocus.
 If lens capabilities arrive after playback, setup retries after 75 ms rather
 than waiting 350 ms for the first retry. Automatic barcode assistance does not change
 hardware zoom or override a selected point. The app maps
@@ -68,6 +73,11 @@ the selected point through the preview crop and preserves resolution and torch
 settings. The hint reports when point focus is unavailable on a browser or lens.
 "Focus requested" acknowledges the camera command; the browser cannot confirm
 that the physical image is sharp.
+Taps also prioritize a smaller native-resolution decoder crop around the chosen
+point, alternating with full-preview searches. Results already in flight from a
+previous target cannot confirm a capture after a tap. The first automatic pass
+searches a central band before the full preview, reducing pixels copied and
+searched for centered labels. Two matching fresh frames are still required.
 On browsers supporting transferable VideoFrames, the camera snapshot is sent
 to the worker before copying pixels. Native-size RGBA copying avoids the
 software canvas draw on the interface thread; a worker canvas handles unsupported
@@ -187,11 +197,17 @@ preparation; worker copying is excluded from decoder time and reported separatel
 Focus-command completion does not confirm physical lens convergence, and image
 clarity estimates depend on the scene. No photographs, raw barcode values,
 credentials, cookies, device IDs, API bodies, or automatic uploads are included.
-Logs retain at most 12 captures and 180 frame records per capture, preserving
+Logs retain at most 60 captures and 360 frame records per capture, preserving
 early and recent frames plus aggregate counts for the full attempt. Image metrics
 sample at most 48×32 positions twice a second from pixels already needed by the
-decoder, with no extra camera/canvas readback. Logs persist after capture closes;
-stored history is trimmed to keep diagnostic storage below roughly 800 KB.
+decoder, with no extra camera/canvas readback. Changed captures persist to
+IndexedDB after scanning, rather than rewriting the entire history into
+synchronous localStorage. Storage is capped at roughly 24 MiB; older frame
+detail is trimmed first, preserving capture summaries. A smaller localStorage
+fallback is used when IndexedDB is unavailable. Existing reports migrate.
+Reports include the storage backend/errors and delayed focus-setting observations
+at 150, 450 and 900 ms after a command. These readings still do not prove physical
+lens convergence; compare them with the sampled frame quality and decode timings.
 
 ## Browser checks
 
@@ -216,6 +232,9 @@ local server, fake camera, and lookup stubs without contacting live services.
 focus/frame/WASM/stall metrics, JSON download, bounded retention, reload
 persistence and exclusion of sensitive values. Recording-overhead measurements
 from this desktop fake-camera test do not replace measurements on a phone.
+`node tests/test_diagnostics_storage.cjs` checks legacy migration, the storage
+budget, all 60 summaries across reloads, unavailable IndexedDB, quota failure and
+retry, and scans starting while older diagnostics are still loading.
 `node tests/test_frame_transport.cjs` checks native and scaled worker pixel
 copies, transfer fallback, geometry and resource release. `node
 tests/test_decoder_budget.cjs` checks cooperative deadlines and barcode decoding

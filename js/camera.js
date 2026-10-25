@@ -120,6 +120,7 @@ function clearFocusRefreshTimers() {
   if (focus) {
     focus.manualRequest += 1;
     focus.manualPoint = false;
+    focus.scanPoint = null;
   }
   if (state.els?.focusTarget) state.els.focusTarget.hidden = true;
   window.clearTimeout(previewFocusFeedbackTimer);
@@ -520,7 +521,7 @@ function getSquareCropSize(video) {
 
 
 function getDetectionCropModes() {
-  return ["visible", "expanded", "visible", "visible"];
+  return ["expanded", "visible", "visible", "visible"];
 }
 
 
@@ -581,6 +582,14 @@ function getDetectionFrameGeometry(mode, maxOutputSize = 1920) {
     sy = Math.max(0, Math.floor(confirmedRegion.y - py));
     sw = Math.min(videoWidth, Math.ceil(confirmedRegion.x + confirmedRegion.width + px)) - sx;
     sh = Math.min(videoHeight, Math.ceil(confirmedRegion.y + confirmedRegion.height + py)) - sy;
+  } else if (mode === "target" && cameraFocusStates.get(state.track)?.scanPoint) {
+    // A tap also tells the decoder where to look. Keep native pixels and
+    // generous quiet zones, alternating with the full preview after a miss.
+    const point = cameraFocusStates.get(state.track).scanPoint;
+    sw = Math.min(videoWidth, Math.max(640, videoWidth * 0.72));
+    sh = Math.min(videoHeight, Math.max(420, videoHeight * 0.36));
+    sx = Math.max(0, Math.min(videoWidth - sw, point.x * videoWidth - sw / 2));
+    sy = Math.max(0, Math.min(videoHeight - sh, point.y * videoHeight - sh / 2));
   } else if (mode === "expanded" || mode === "detail" || mode === "visible") {
     const container = state.els.previewFrame;
     const cover = getCoverSourceRect(videoWidth, videoHeight,
@@ -700,12 +709,15 @@ async function detectBarcodeInFrame(frameTiming = {}) {
   const diagnostic = captureDiagnostics.current;
   const started = performance.now();
   const session = state.scanSession;
+  const focusRevision = state.focusTargetRevision || 0;
   const detector = await createDetector();
   const attempt = state.detectionAttempt || 0;
   // Keep the successful crop for confirmation on the next fresh camera frame.
   const confirming = Boolean(state.pendingConfirmCode && state.lastDetectionPass);
   const pass = confirming ? state.lastDetectionPass : makeDetectionPass(attempt);
-  const cropMode = confirming && state.lastBarcodeRegion ? "confirm" : pass.mode;
+  const focusTarget = cameraFocusStates.get(state.track)?.scanPoint;
+  const cropMode = confirming && state.lastBarcodeRegion ? "confirm" :
+    focusTarget && attempt % 2 === 0 ? "target" : pass.mode;
   const drawStarted = performance.now();
   let image = null, videoFrame = null, frameGeometry;
   if (detector.videoFrames && !state.workerFrameTransferUnavailable && typeof VideoFrame === "function") {
@@ -761,7 +773,7 @@ async function detectBarcodeInFrame(frameTiming = {}) {
         assistSmallBarcode(region, frameGeometry, session);
       },
       onRegion: (region) => {
-        if (session !== state.scanSession) return;
+        if (session !== state.scanSession || focusRevision !== (state.focusTargetRevision || 0)) return;
         state.lastBarcodeRegion = {
           x: frameGeometry.sx + region.x * frameGeometry.sw / frameGeometry.outputWidth,
           y: frameGeometry.sy + region.y * frameGeometry.sh / frameGeometry.outputHeight,
@@ -782,8 +794,10 @@ async function detectBarcodeInFrame(frameTiming = {}) {
       drawMs: readStarted - drawStarted, readbackMs: diagnosticsStarted - readStarted,
       decodeMs: performance.now() - decodeStarted, totalMs: performance.now() - started + (frameTiming.waitMs || 0),
       diagnosticsMs, transport: videoFrame ? "video-frame" : "main-canvas", cropMode,
-      geometry: frameGeometry, decoded: Boolean(text), worker, quality, videoState }, diagnostic);
+      geometry: frameGeometry, decoded: Boolean(text), worker, quality, videoState,
+      targetChanged: focusRevision !== (state.focusTargetRevision || 0) }, diagnostic);
   }
+  if (focusRevision !== (state.focusTargetRevision || 0)) return "";
   if (session === state.scanSession) {
     state.detectionAttempt = attempt + 1;
     state.lastDetectionPass = text ? pass : null;
@@ -1132,6 +1146,7 @@ function applyCameraTrackConstraints(track, changes, session) {
     const current = cameraTrackConstraints.get(track) || track.getConstraints?.() || {};
     const next = { ...current };
     const keys = Object.keys(changes);
+    if (changes.focusMode && changes.focusMode !== "manual") keys.push("focusDistance");
     keys.forEach((key) => { delete next[key]; });
     const advanced = (current.advanced || []).map(function (entry) {
       const kept = { ...entry };
@@ -1147,7 +1162,8 @@ function applyCameraTrackConstraints(track, changes, session) {
     let actual = {};
     try { actual = track.getSettings?.() || {}; } catch (_) {}
     captureDiagnostics.event("camera.controlApplied", { queueMs, applyMs, changes,
-      actual: { focusMode: actual.focusMode, focusDistance: actual.focusDistance, width: actual.width, height: actual.height, torch: actual.torch } }, diagnostic);
+      actual: { focusMode: actual.focusMode, focusDistance: actual.focusDistance, pointsOfInterest: actual.pointsOfInterest,
+        width: actual.width, height: actual.height, torch: actual.torch } }, diagnostic);
     if (!isCurrentCameraTrack(track)) return false;
     cameraTrackConstraints.set(track, next);
     return true;
@@ -1202,7 +1218,7 @@ async function requestFocusRefresh(track, options = {}) {
   let focus = cameraFocusStates.get(track);
   if (!focus) {
     focus = { mode: "", pending: null, updatedAt: 0, lastForcedAt: -Infinity,
-      pointRejected: false, manualRequest: 0, manualPoint: false, point: null };
+      pointRejected: false, singleShotUnavailable: false, manualRequest: 0, manualPoint: false, point: null, scanPoint: null };
     cameraFocusStates.set(track, focus);
   }
   const session = options.session ?? state.scanSession;
@@ -1211,6 +1227,13 @@ async function requestFocusRefresh(track, options = {}) {
     // A user's selected target remains authoritative for this capture. Do not
     // let decoder candidates change it again a few seconds after the tap.
     focus.manualPoint = true;
+    if (options.point) focus.scanPoint = { x: options.point.x, y: options.point.y };
+    state.focusTargetRevision = (state.focusTargetRevision || 0) + 1;
+    state.pendingConfirmCode = "";
+    state.pendingConfirmCount = 0;
+    state.lastBarcodeRegion = null;
+    state.lastDetectionPass = null;
+    state.detectionAttempt = 0;
   } else if (focus.manualPoint) {
     captureDiagnostics.event("focus.skipped", { reason: "user-selected-point" }, diagnostic); return false;
   }
@@ -1226,8 +1249,9 @@ async function requestFocusRefresh(track, options = {}) {
   try {
     // Capability detection also covers iPhones if their browser exposes focus.
     // Otherwise native autofocus continues without sending camera constraints.
-    const modes = track.getCapabilities().focusMode || [];
-    let mode = options.manual && modes.includes("single-shot") ? "single-shot" :
+    const capabilities = track.getCapabilities();
+    const modes = capabilities.focusMode || [];
+    let mode = options.manual && !focus.singleShotUnavailable && modes.includes("single-shot") ? "single-shot" :
       modes.includes("continuous") ? "continuous" :
       modes.includes("single-shot") ? "single-shot" : "";
     if (!mode) { captureDiagnostics.event("focus.unavailable", {}, diagnostic); return false; }
@@ -1259,15 +1283,45 @@ async function requestFocusRefresh(track, options = {}) {
     const changes = { focusMode: mode };
     if (point) changes.pointsOfInterest = [point];
 
+    let restarted = false;
     focus.pending = (async function () {
       let applied;
+      // Chrome/Android can advertise single-shot while keeping continuous
+      // mode. Reapplying that same mode does not necessarily restart the lens.
+      // Briefly release AF through the advertised manual mode, let one preview
+      // frame pass, then restore continuous AF at the selected point.
+      const restartContinuous = async function () {
+        if (!modes.includes("manual") || !modes.includes("continuous")) return;
+        if (manualRequest !== focus.manualRequest || session !== state.scanSession) return;
+        const reset = { focusMode: "manual" };
+        const range = capabilities.focusDistance;
+        if (range && Number.isFinite(range.min) && Number.isFinite(range.max) && range.max > range.min) {
+          const currentDistance = track.getSettings?.().focusDistance;
+          const distance = currentDistance >= range.min && currentDistance <= range.max ? currentDistance : 0.25;
+          const step = range.step > 0 ? range.step : 0;
+          reset.focusDistance = Math.max(range.min, Math.min(range.max,
+            step ? range.min + Math.round((distance - range.min) / step) * step : distance));
+        }
+        try {
+          if (!await applyCameraTrackConstraints(track, reset, session)) return;
+          restarted = track.getSettings?.().focusMode === "manual";
+          captureDiagnostics.event("focus.restart", { manualModeReported: restarted,
+            seedDistance: reset.focusDistance }, diagnostic);
+          // Nonblocking: decoding and preview continue during this frame.
+          if (restarted) await new Promise(resolve => window.setTimeout(resolve, 65));
+        } catch (error) { captureDiagnostics.error("focus.restart", error, diagnostic); }
+      };
+      // Automatic candidate hints should not interrupt an ongoing native hunt.
+      if (mode === "continuous" && options.manual) await restartContinuous();
       try {
         applied = await applyCameraTrackConstraints(track, changes, session);
       } catch (error) {
         if (mode === "single-shot" && modes.includes("continuous") &&
             error.constraint !== "pointsOfInterest" && isCurrentCameraTrack(track)) {
           // Some devices advertise single-shot but reject the command.
+          focus.singleShotUnavailable = true;
           mode = changes.focusMode = "continuous";
+          await restartContinuous();
           try { applied = await applyCameraTrackConstraints(track, changes, session); }
           catch (fallbackError) { error = fallbackError; }
         }
@@ -1282,7 +1336,10 @@ async function requestFocusRefresh(track, options = {}) {
       if (!applied) return false;
       let actualMode = track.getSettings?.().focusMode;
       if (actualMode && actualMode !== mode && mode === "single-shot" && modes.includes("continuous")) {
+        focus.singleShotUnavailable = true;
+        captureDiagnostics.event("focus.modeIgnored", { requested: mode, reported: actualMode }, diagnostic);
         mode = changes.focusMode = "continuous";
+        await restartContinuous();
         if (!await applyCameraTrackConstraints(track, focus.pointRejected ? { focusMode: mode } : changes, session)) return false;
         actualMode = track.getSettings?.().focusMode;
       }
@@ -1292,13 +1349,33 @@ async function requestFocusRefresh(track, options = {}) {
       focus.updatedAt = Date.now();
       captureDiagnostics.camera(track, diagnostic);
       captureDiagnostics.mark("focus.commandComplete", { mode, pointRequested: Boolean(point),
-        pointRejected: focus.pointRejected, requestMs: performance.now() - focusStarted }, diagnostic);
+        pointRejected: focus.pointRejected, restarted, pointReported: track.getSettings?.().pointsOfInterest,
+        requestMs: performance.now() - focusStarted }, diagnostic);
+      // Sample later reported settings without another camera command or readback.
+      for (const delay of [150, 450, 900]) {
+        state.focusRefreshTimers.push(window.setTimeout(function () {
+          if (!state.capturePageOpen || !isCurrentCameraTrack(track) || session !== state.scanSession ||
+              manualRequest !== focus.manualRequest) return;
+          const observed = track.getSettings?.() || {};
+          captureDiagnostics.event("focus.observed", { afterMs: delay, focusMode: observed.focusMode,
+            focusDistance: observed.focusDistance, pointsOfInterest: observed.pointsOfInterest }, diagnostic);
+        }, delay));
+      }
       if (options.manual && manualRequest === focus.manualRequest) {
         // The API acknowledges a request; it does not report lens convergence.
-        setPreviewFocusFeedback(point && !focus.pointRejected ? "Focus requested" : "Autofocus refreshed · point focus unavailable");
+        setPreviewFocusFeedback(restarted ? "Autofocus restarted" :
+          point && !focus.pointRejected ? "Focus requested" : "Autofocus requested · point focus unavailable");
       }
       return true;
-    }()).catch((error) => { captureDiagnostics.error("focus.apply", error, diagnostic); return false; });
+    }()).catch((error) => { captureDiagnostics.error("focus.apply", error, diagnostic); return false; })
+      .finally(async function () {
+        // Cancellation/new capture during the brief reset must not leave a
+        // reused live stream locked in manual focus. Do not touch another track.
+        if (restarted && isCurrentCameraTrack(track) && track.getSettings?.().focusMode === "manual") {
+          try { await applyCameraTrackConstraints(track, { focusMode: "continuous" }); }
+          catch (error) { captureDiagnostics.error("focus.restore", error, diagnostic); }
+        }
+      });
     return await focus.pending;
   } catch (error) {
     // Focus controls are optional; a failure must never stop the live preview.
