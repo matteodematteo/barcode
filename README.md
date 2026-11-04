@@ -50,6 +50,9 @@ mode. The main screen requests one core script and one stylesheet. Camera code
 and the decoder warm after first paint, without requesting camera permission.
 Capture requests hardware synchronously in the button's click, in parallel with
 any remaining code loading, and shows video before decoding is ready.
+If a permission prompt backgrounds the page during startup, a replacement
+camera request waits for the pending request to settle and its canceled stream
+to stop. Queued requests canceled before acquisition never open the camera.
 The initial request prefers 1920×1080 with no forced aspect ratio or software
 resize mode. There is no resolution switch during scanning. Custom focus
 constraints run after playback begins and preserve the requested resolution. Pointer/focus
@@ -227,6 +230,13 @@ at 150, 450 and 900 ms after a command. These readings still do not prove physic
 lens convergence; compare them with the sampled frame quality and decode timings.
 
 ## Browser checks
+
+Run `node tests/test_camera_request.cjs` for camera-request serialization,
+cancellation, saved-camera fallback and permission-denial recovery without
+hardware or packages. With Playwright and Edge available, run
+`node tests/test_camera_startup.cjs` to reproduce permission backgrounding while
+the capture bundle is delayed, verify that camera requests cannot overlap,
+and check capture and permission-denial retry without a page reload.
 
 Focus regressions can be checked without hardware:
 

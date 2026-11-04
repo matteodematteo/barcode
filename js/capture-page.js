@@ -4,6 +4,10 @@
 // returns immediately without another page load or waiting for the ERP.
 let captureEnginePromise = null;
 let captureEngineLoaded = false;
+// Stopping a capture cannot cancel a pending getUserMedia permission request.
+// Retain it separately from state.captureRequest until its result is disposed,
+// so foreground recovery or a rapid retry cannot open hardware in parallel.
+let pendingCaptureHardwareRequest = null;
 
 function warmCaptureEngine() {
   // Compile in the worker after first paint, without opening camera hardware.
@@ -28,25 +32,35 @@ function requestCaptureStream(deviceId) {
   request.videoConstraints = video;
   captureDiagnostics.event("camera.requestConstraints", { constraints: { ...CONFIG.cameraStartupVideo,
     focusMode: video.focusMode, facingMode: video.facingMode } }, diagnostic);
-  // Request permission synchronously in the original click, including on iOS.
-  let camera;
-  try {
-    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-      throw new Error("Camera access requires HTTPS or localhost and a supported browser.");
+  const isCurrent = function () {
+    return state.capturePageOpen && state.captureRequest === request &&
+      request.generation === state.captureGeneration && !document.hidden;
+  };
+  const acquire = function () {
+    try {
+      if (!isCurrent()) throw new DOMException("Capture closed", "AbortError");
+      if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Camera access requires HTTPS or localhost and a supported browser.");
+      }
+      return navigator.mediaDevices.getUserMedia({ audio: false, video: video });
+    } catch (error) {
+      return Promise.reject(error);
     }
-    camera = navigator.mediaDevices.getUserMedia({ audio: false, video: video });
-  } catch (error) {
-    camera = Promise.reject(error);
-  }
+  };
+  const previous = pendingCaptureHardwareRequest;
+  pendingCaptureHardwareRequest = request;
+  // Keep the first request synchronous in the original click (including iOS).
+  // Only a replacement waits for the old request and its stale-track cleanup.
+  const camera = previous ? previous.promise.then(acquire, acquire) : acquire();
   request.promise = camera.catch(function (error) {
-    if (!state.capturePageOpen || request.generation !== state.captureGeneration || document.hidden) throw error;
+    if (!isCurrent()) throw error;
     if (!["OverconstrainedError", "NotFoundError"].includes(error.name)) throw error;
     captureDiagnostics.error("camera.requestRetry", error, diagnostic);
     // Retry an unavailable saved camera without changing the requested quality.
     request.videoConstraints = { ...CONFIG.cameraStartupVideo };
     return navigator.mediaDevices.getUserMedia({ audio: false, video: request.videoConstraints });
   }).then(function (stream) {
-    if (!state.capturePageOpen || state.captureRequest !== request || request.generation !== state.captureGeneration || document.hidden) {
+    if (!isCurrent()) {
       stream.getTracks().forEach(function (track) { track.stop(); });
       return { error: new DOMException("Capture closed", "AbortError") };
     }
@@ -62,7 +76,14 @@ function requestCaptureStream(deviceId) {
       captureDiagnostics.mark("camera.playing", {}, diagnostic); return null;
     }, function (error) { captureDiagnostics.error("camera.play", error, diagnostic); return error; });
     return { stream: stream };
-  }, function (error) { captureDiagnostics.error("camera.request", error, diagnostic); return { error: error }; });
+  }).catch(function (error) {
+    request.stream?.getTracks().forEach(function (track) { track.stop(); });
+    request.stream = null;
+    captureDiagnostics.error("camera.request", error, diagnostic);
+    return { error: error };
+  }).finally(function () {
+    if (pendingCaptureHardwareRequest === request) pendingCaptureHardwareRequest = null;
+  });
   return request;
 }
 
@@ -85,7 +106,7 @@ function loadCaptureEngine() {
   captureEnginePromise = new Promise(function (resolve, reject) {
     captureDiagnostics.event("captureBundle.loading");
     const script = document.createElement("script");
-    script.src = "js/capture.bundle.js?v=163";
+    script.src = "js/capture.bundle.js?v=164";
     script.onload = function () {
       captureEngineLoaded = true;
       captureDiagnostics.mark("captureBundle.ready");
