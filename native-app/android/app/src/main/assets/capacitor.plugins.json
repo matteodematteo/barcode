@@ -1,0 +1,6 @@
+[
+	{
+		"pkg": "native-barcode-capture",
+		"classpath": "com.mattoteo.nativebarcode.NativeBarcodeCapturePlugin"
+	}
+]

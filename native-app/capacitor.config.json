@@ -1,0 +1,11 @@
+{
+  "appId": "com.mattoteo.webscanner",
+  "appName": "Web Scanner",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "plugins": {
+    "NativeBarcodeCapture": {
+      "cameraPermissionText": "Scan product barcodes using the camera."
+    }
+  }
+}
