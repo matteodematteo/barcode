@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=179");
+importScripts("capture-frame-worker.js?v=180");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -860,6 +860,14 @@ async function verifyRetailRegion(pixels, region, options, deadline, expectedTex
       if (frameDiagnostics) frameDiagnostics.verificationEvidence = "four-lines";
       return offsetBarcodePositions(strong, rect);
     }
+    if (expectedText && performance.now() < deadline) {
+      const angle = estimateBarcodeRotation(crop);
+      const angled = await readAngledBarcode(crop, { ...options, minLineCount: 4 }, angle, deadline);
+      if (angled.some(result => isAcceptedBarcode(result) && result.text === expectedText)) {
+        if (frameDiagnostics) frameDiagnostics.verificationEvidence = "four-angled-lines";
+        return offsetBarcodePositions(angled, rect);
+      }
+    }
     if (performance.now() >= deadline) break;
     // Short/tilted bars may supply only two matching rows. Accept that local
     // read only when a second, wider context agrees on this fresh frame.
@@ -921,6 +929,13 @@ function restoreRotatedPositions(results, original, rotated, angle, enlargement 
 
 function offsetBarcodePositions(results, rect) {
   return mapBarcodePositions(results, (point) => ({ x: point.x + rect.x, y: point.y + rect.y }));
+}
+
+async function readAngledBarcode(pixels, options, angle, deadline) {
+  if (!angle || performance.now() >= deadline) return [];
+  const rotated = rotateBarcodePixels(pixels, angle);
+  const results = await readBarcodePixels(rotated, { ...options, tryHarder: true }, deadline);
+  return results.some(isAcceptedBarcode) ? restoreRotatedPositions(results, pixels, rotated, angle) : [];
 }
 
 async function decodeBarcodePixels(pixels, options, data, deadline) {
@@ -1078,6 +1093,25 @@ self.onmessage = async ({ data }) => {
           results = await verifyRetailRegion(pixels, verification, dense, deadline, data.verificationCode || "");
         }
       }
+      const phase = Math.abs(data.regionOffset || 0) % 4;
+      const scheduledAngle = data.orientation === "auto" ? 0 : Number(data.orientation);
+      if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+        if (Number.isFinite(scheduledAngle) && scheduledAngle) {
+          // Give steep/off-center barcodes a turn before shelf and text searches.
+          triedScheduledAngle = true;
+          if (frameDiagnostics) frameDiagnostics.stage = "scheduled-angle";
+          results = await readAngledBarcode(pixels, options, scheduledAngle, deadline);
+        } else if (phase === 1) {
+          const x = Math.floor(pixels.width * 0.075), y = Math.floor(pixels.height * 0.15);
+          const rect = { x, y, width: pixels.width - x * 2, height: pixels.height - y * 2 };
+          const angle = estimateBarcodeRotation(pixels, rect);
+          if (angle && performance.now() < deadline) {
+            if (frameDiagnostics) frameDiagnostics.stage = "aimed-angle";
+            results = offsetBarcodePositions(
+              await readAngledBarcode(cropBarcodePixels(pixels, rect), dense, angle, deadline), rect);
+          }
+        }
+      }
       let centerBand = null;
       const bandY = Math.floor(pixels.height * 0.35);
       if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
@@ -1100,7 +1134,7 @@ self.onmessage = async ({ data }) => {
           if (results.some(isAcceptedBarcode)) break;
         }
       }
-      if (!results.some(isAcceptedBarcode) && Math.abs(data.regionOffset || 0) % 4 === 3 && performance.now() < deadline) {
+      if (!results.some(isAcceptedBarcode) && phase === 3 && performance.now() < deadline) {
         // Spend periodic longer passes on compact coloured labels after the
         // quick full-preview read and any pending retail verification.
         if (frameDiagnostics) frameDiagnostics.stage = "compact-colour-labels";
@@ -1178,15 +1212,6 @@ self.onmessage = async ({ data }) => {
           results = await readBarcodeStrip(pixels, rect, dense, deadline);
           if (results.some(isAcceptedBarcode)) break;
         }
-      }
-      const scheduledAngle = data.orientation === "auto" ? 0 : Number(data.orientation);
-      if (!results.some(isAcceptedBarcode) && Number.isFinite(scheduledAngle) && scheduledAngle &&
-          performance.now() < deadline) {
-        // Give the occasional scheduled angle its turn before locating more
-        // candidates can spend this frame's shared budget on packaging edges.
-        triedScheduledAngle = true;
-        if (frameDiagnostics) frameDiagnostics.stage = "scheduled-angle";
-        results = await decodeBarcodePixels(pixels, options, data, deadline);
       }
       if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
         const panels = colourPanels || findColourLabelRegions(pixels);
