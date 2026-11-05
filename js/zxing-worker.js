@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=178");
+importScripts("capture-frame-worker.js?v=179");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -653,6 +653,164 @@ function readEan13Scanlines(pixels, deadline, topRatio = 0.42, bottomRatio = 0.9
       bottomRight: { x: x1, y: bottom }, bottomLeft: { x: x0, y: bottom } } }];
 }
 
+// ISO/IEC 15417 Code 128 symbol widths, in symbol-value order.
+// Table cross-checked against ZXing Code128Reader.CODE_PATTERNS (Apache-2.0).
+const CODE128_WIDTHS = "212222 222122 222221 121223 121322 131222 122213 122312 132212 221213 221312 231212 112232 122132 122231 113222 123122 123221 223211 221132 221231 213212 223112 312131 311222 321122 321221 312212 322112 322211 212123 212321 232121 111323 131123 131321 112313 132113 132311 211313 231113 231311 112133 112331 132131 113123 113321 133121 313121 211331 231131 213113 213311 213131 311123 311321 331121 312113 312311 332111 314111 221411 431111 111224 111422 121124 121421 141122 141221 112214 112412 122114 122411 142112 142211 241211 221114 413111 241112 134111 111242 121142 121241 114212 124112 124211 411212 421112 421211 212141 214121 412121 111143 111341 131141 114113 114311 411113 411311 113141 114131 311141 411131 211412 211214 211232 2331112";
+const CODE128_PATTERNS = CODE128_WIDTHS.split(" ").map(widths => {
+  const mask = [...widths].flatMap((width, i) => Array(Number(width)).fill(i % 2));
+  const mean = mask.reduce((sum, value) => sum + value, 0) / mask.length;
+  const norm = Math.sqrt(mask.length * mean * (1 - mean));
+  return Float32Array.from(mask, value => (value - mean) / norm);
+});
+
+function sampleCode128Symbol(row, left, unit, samples) {
+  let sum = 0, squared = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const x = left + (i + 0.5) * unit;
+    const floor = Math.floor(x);
+    const value = row[floor] + (row[floor + 1] - row[floor]) * (x - floor);
+    samples[i] = value;
+    sum += value;
+    squared += value * value;
+  }
+  return Math.sqrt(Math.max(0, squared - sum * sum / samples.length));
+}
+
+function code128Match(samples, pattern, contrast) {
+  let match = 0;
+  for (let i = 0; i < samples.length; i++) match += samples[i] * pattern[i];
+  return match / contrast;
+}
+
+function readCode128Symbols(row, left, unit, count, start, samples) {
+  const symbols = [];
+  let score = 0;
+  for (let i = 1; i < count; i++) {
+    const contrast = sampleCode128Symbol(row, left + i * unit * 11, unit, samples);
+    if (contrast < 24) return null;
+    let best = { value: -1, score: 0 }, second = best;
+    for (let value = 0; value < 103; value++) {
+      const match = code128Match(samples, CODE128_PATTERNS[value], contrast);
+      if (match > best.score) {
+        second = best; best = { value, score: match };
+      } else if (match > second.score) {
+        second = { value, score: match };
+      }
+    }
+    if (best.score < 0.71) return null;
+    symbols.push([best, second]);
+    score += best.score;
+  }
+  if (score / symbols.length < 0.83) return null;
+
+  // Limit recovery to numeric retail codes. Both the barcode's own check
+  // symbol and the check digit in its payload must agree with the observed bars.
+  const data = symbols.slice(0, -1);
+  const check = symbols[symbols.length - 1];
+  if (check[0].score < 0.82 || check[0].score - check[1].score < 0.06) return null;
+  const candidates = new Set();
+  for (let alternate = -1; alternate < data.length; alternate++) {
+    if (alternate >= 0 && (data[alternate][1].score < 0.70 ||
+        data[alternate][0].score - data[alternate][1].score > 0.07)) continue;
+    let mode = start, checksum = start, text = "";
+    for (let i = 0; i < data.length; i++) {
+      const value = data[i][i === alternate ? 1 : 0].value;
+      checksum += (i + 1) * value;
+      if (mode === 105 && value < 100) text += String(value).padStart(2, "0");
+      else if (mode !== 105 && value >= 16 && value <= 25) text += String(value - 16);
+      else if (mode !== 105 && value === 99) mode = 105;
+      else if (mode === 105 && (value === 100 || value === 101)) mode = value === 100 ? 104 : 103;
+      else { text = ""; break; }
+    }
+    if (checksum % 103 !== check[0].value || !/^(?:\d{8}|\d{12,14})$/.test(text)) continue;
+    let digitSum = 0;
+    for (let i = 0; i < text.length; i++) digitSum += Number(text[text.length - 1 - i]) * (i % 2 ? 3 : 1);
+    if (digitSum % 10 === 0) candidates.add(text);
+  }
+  return candidates.size === 1 ? { text: [...candidates][0], score: score / symbols.length } : null;
+}
+
+function readFadedCode128Row(row, deadline) {
+  const starts = [], ends = [];
+  // A smooth quiet zone followed by a dark edge makes a plausible boundary.
+  // Keep the search local so text and neighbouring labels cannot set its scale.
+  for (let x = 10; x < row.length - 11; x++) {
+    const inside = (row[x] + row[x + 1]) / 2;
+    const before = (row[x - 9] + row[x - 5] + row[x - 2]) / 3;
+    const after = (row[x + 3] + row[x + 6] + row[x + 10]) / 3;
+    if (before - inside > 22 && Math.abs(row[x - 9] - row[x - 2]) < 12 &&
+        row[x - 1] - row[x + 1] > 12) starts.push(x);
+    if (after - inside > 22 && Math.abs(row[x + 3] - row[x + 10]) < 12 &&
+        row[x + 2] - row[x] > 12) ends.push(x + 2);
+  }
+  if (starts.length > 30 || ends.length > 30) return null;
+  const samples = new Float32Array(11), stopSamples = new Float32Array(13);
+  let best = null, conflict = false;
+  for (const begin of starts) for (const end of ends) {
+    if (end - begin < 90) continue;
+    if (performance.now() >= deadline) return null;
+    for (let count = 6; count <= 16; count++) {
+      for (const startOffset of [-1.5, -0.75, 0, 0.75]) for (const endOffset of [-0.75, 0, 0.75, 1.5]) {
+        const left = begin + startOffset, right = end + endOffset;
+        const unit = (right - left) / (count * 11 + 13);
+        if (unit < 1.05 || unit > 4.5) continue;
+        const contrast = sampleCode128Symbol(row, left, unit, samples);
+        if (contrast < 29) continue;
+        let start = 103, startScore = 0;
+        for (let value = 103; value <= 105; value++) {
+          const score = code128Match(samples, CODE128_PATTERNS[value], contrast);
+          if (score > startScore) { start = value; startScore = score; }
+        }
+        if (startScore < 0.81) continue;
+        const stopContrast = sampleCode128Symbol(row, left + count * 11 * unit, unit, stopSamples);
+        if (stopContrast < 28 || code128Match(stopSamples, CODE128_PATTERNS[106], stopContrast) < 0.66) continue;
+        const hit = readCode128Symbols(row, left, unit, count, start, samples);
+        if (!hit) continue;
+        if (best && best.text !== hit.text) conflict = true;
+        if (!best || hit.score > best.score) best = { ...hit, left, right };
+      }
+    }
+  }
+  return conflict ? null : best;
+}
+
+function readFadedCode128(pixels, panel, deadline, top = 0.55, bottom = 0.91) {
+  const votes = new Map();
+  const row = new Float32Array(panel.width);
+  const sampleRadius = Math.max(2, Math.min(5, Math.round(panel.height / 60)));
+  const step = sampleRadius * 2 + 1;
+  const topEdge = Math.max(sampleRadius, panel.y + Math.round(panel.height * top));
+  const bottomEdge = Math.min(pixels.height - sampleRadius, panel.y + Math.round(panel.height * bottom));
+  if (topEdge >= bottomEdge) return [];
+  // Price labels usually put the barcode below the text. Start there and
+  // alternate outward with disjoint groups of rows.
+  const middle = topEdge + Math.floor((bottomEdge - 1 - topEdge) / (2 * step)) * step;
+  let upper = middle, lower = middle + step;
+  while ((upper >= topEdge || lower < bottomEdge) && performance.now() < deadline) {
+    const takeUpper = upper >= topEdge && (lower >= bottomEdge || middle - upper <= lower - middle);
+    const y = takeUpper ? upper : lower;
+    if (takeUpper) upper -= step;
+    else lower += step;
+    row.fill(0);
+    for (let dy = -sampleRadius; dy <= sampleRadius; dy++) {
+      const start = ((y + dy) * pixels.width + panel.x) * 4;
+      for (let x = 0; x < row.length; x++) row[x] += pixels.data[start + x * 4] / step;
+    }
+    const hit = readFadedCode128Row(row, deadline);
+    if (!hit) continue;
+    const vote = votes.get(hit.text);
+    if (!vote) { votes.set(hit.text, { ...hit, y }); continue; }
+    if (Math.abs(vote.left - hit.left) > 8 || Math.abs(vote.right - hit.right) > 8) continue;
+    const left = panel.x + hit.left, right = panel.x + hit.right;
+    const y0 = Math.min(vote.y, y) - sampleRadius, y1 = Math.max(vote.y, y) + sampleRadius;
+    return [{ isValid: true, text: hit.text, format: "Code128", position: {
+      topLeft: { x: left, y: y0 }, topRight: { x: right, y: y0 },
+      bottomLeft: { x: left, y: y1 }, bottomRight: { x: right, y: y1 }
+    } }];
+  }
+  return [];
+}
+
 async function readCompactColourLabel(pixels, panel, options, deadline) {
   if (performance.now() >= deadline) return [];
   const crop = cropBarcodePixels(pixels, panel);
@@ -901,13 +1059,52 @@ self.onmessage = async ({ data }) => {
         // before background candidates. Four matching rows reject the thin
         // crop misread found in the supplied EAN-13 label photos.
         if (frameDiagnostics) frameDiagnostics.stage = "retail-verification-region";
-        results = await verifyRetailRegion(pixels, verification, dense, deadline, data.verificationCode || "");
+        if (data.verificationFormat === "Code128" && options.formats?.includes("Code128")) {
+          const x = Math.max(0, Math.floor(verification.x - verification.width * 0.25));
+          const y = Math.max(0, Math.floor(verification.y - verification.height * 0.8));
+          const width = Math.min(pixels.width, Math.ceil(verification.x + verification.width * 1.25)) - x;
+          const height = Math.min(pixels.height, Math.ceil(verification.y + verification.height * 1.8)) - y;
+          if (width > 0 && height > 0) {
+            const rect = { x, y, width, height };
+            const verified = await readDiagnosticBarcodes(cropBarcodePixels(pixels, rect),
+              { ...dense, formats: ["Code128"], minLineCount: 4 });
+            const matching = result => isAcceptedBarcode(result) && result.text === data.verificationCode;
+            if (verified.some(matching)) results = offsetBarcodePositions(verified.filter(matching), rect);
+            else results = readFadedCode128(pixels, rect, Math.min(deadline, performance.now() + 24), 0.15, 0.85)
+              .filter(matching);
+          }
+        }
+        if (!results.some(isAcceptedBarcode)) {
+          results = await verifyRetailRegion(pixels, verification, dense, deadline, data.verificationCode || "");
+        }
+      }
+      let centerBand = null;
+      const bandY = Math.floor(pixels.height * 0.35);
+      if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+        if (frameDiagnostics) frameDiagnostics.stage = "center-strip-priority";
+        centerBand = cropBarcodePixels(pixels, { x: 0, y: bandY, width: pixels.width,
+          height: Math.ceil(pixels.height * 0.3) });
+        results = await readDiagnosticBarcodes(centerBand, dense);
+        if (results.some(isAcceptedBarcode)) results = offsetBarcodePositions(results, { x: 0, y: bandY });
+      }
+      if (!results.some(isAcceptedBarcode) && options.formats?.includes("Code128") && performance.now() < deadline) {
+        // Try small coloured labels before dense searches of the whole shelf.
+        colourPanels = findColourLabelRegions(pixels);
+        const labelDeadline = Math.min(deadline, performance.now() + 30);
+        if (frameDiagnostics) frameDiagnostics.stage = "faded-code128";
+        for (const panel of colourPanels.slice(0, 2)) {
+          if (performance.now() >= labelDeadline) break;
+          if (panel.score < 0.65 || panel.width > pixels.width * 0.7 ||
+              panel.width * panel.height > pixels.width * pixels.height * 0.18) continue;
+          results = readFadedCode128(pixels, panel, labelDeadline);
+          if (results.some(isAcceptedBarcode)) break;
+        }
       }
       if (!results.some(isAcceptedBarcode) && Math.abs(data.regionOffset || 0) % 4 === 3 && performance.now() < deadline) {
         // Spend periodic longer passes on compact coloured labels after the
         // quick full-preview read and any pending retail verification.
         if (frameDiagnostics) frameDiagnostics.stage = "compact-colour-labels";
-        colourPanels = findColourLabelRegions(pixels);
+        colourPanels ||= findColourLabelRegions(pixels);
         for (const panel of colourPanels.slice(0, 4)) {
           if (performance.now() >= deadline) break;
           if (panel.width > pixels.width * 0.7 || panel.width < 72 || panel.height < 28 ||
@@ -917,19 +1114,11 @@ self.onmessage = async ({ data }) => {
         }
       }
       let globalStrips = [];
-      if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+      if (!results.some(isAcceptedBarcode) && centerBand && performance.now() < deadline) {
         // Search the aimed center band first. A small retail label should not
         // spend its short frame budget on distant shelves and package text.
         if (frameDiagnostics) frameDiagnostics.stage = "center-strip-priority";
-        const bandY = Math.floor(pixels.height * 0.35);
-        const bandHeight = Math.ceil(pixels.height * 0.3);
-        const band = cropBarcodePixels(pixels, { x: 0, y: bandY, width: pixels.width, height: bandHeight });
-        // Dense rows in this small band are cheap and find short barcodes
-        // even when text/packaging defeats the edge locator's ranking.
-        results = await readDiagnosticBarcodes(band, dense);
-        if (results.some(isAcceptedBarcode)) results = offsetBarcodePositions(results, { x: 0, y: bandY });
-        const centerStrips = !results.some(isAcceptedBarcode) && performance.now() < deadline
-          ? findBarcodeStrips(band).map((rect) => ({ ...rect, y: rect.y + bandY })) : [];
+        const centerStrips = findBarcodeStrips(centerBand).map((rect) => ({ ...rect, y: rect.y + bandY }));
         if (frameDiagnostics) {
           frameDiagnostics.centerStrips = centerStrips.length;
           frameDiagnostics.priorityStrips = centerStrips.slice(0, 3).map(({ x, y, width, height, edges }) =>
