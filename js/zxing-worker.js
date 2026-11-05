@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=167");
+importScripts("capture-frame-worker.js?v=169");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -487,16 +487,64 @@ async function readBarcodeStrip(pixels, rect, options, deadline) {
   if (performance.now() >= deadline) return [];
   const crop = cropBarcodePixels(pixels, rect);
   if (performance.now() >= deadline) return [];
-  let results = await readDiagnosticBarcodes(crop, options);
+  // A checksum-valid retail code can be recovered from one clean scanline in
+  // a small crop. The page still requires the same code on another live frame.
+  const candidateOptions = { ...options, minLineCount: 1 };
+  let results = await readDiagnosticBarcodes(crop, candidateOptions);
   if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
     const normalized = normalizeBarcodePixels(crop, 1, rect.core);
-    if (normalized && performance.now() < deadline) results = await readDiagnosticBarcodes(normalized, options);
+    if (normalized && performance.now() < deadline) results = await readDiagnosticBarcodes(normalized, candidateOptions);
   }
   if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
     const normalized = normalizeBarcodePixels(crop, 1);
-    if (normalized && performance.now() < deadline) results = await readDiagnosticBarcodes(normalized, options);
+    if (normalized && performance.now() < deadline) results = await readDiagnosticBarcodes(normalized, candidateOptions);
+  }
+  if (!results.some(isAcceptedBarcode) && rect.core && performance.now() < deadline) {
+    // Small shelf labels often reach the sensor with only a few pixels per
+    // bar. Normalize the candidate crop and enlarge it before giving up.
+    const normalized = normalizeBarcodePixels(crop, 1, rect.core) || normalizeBarcodePixels(crop, 1);
+    if (normalized && performance.now() < deadline) {
+      const enlarged = rotateBarcodePixels(normalized, 0, 3);
+      const scale = enlarged.width / normalized.width;
+      if (scale > 1 && performance.now() < deadline) {
+        results = await decodeBarcodePixels(enlarged, { ...candidateOptions, tryDownscale: false },
+          { orientation: "auto", thorough: true, enhance: true }, deadline);
+        if (results.some(isAcceptedBarcode)) {
+          results = offsetBarcodePositions(
+            restoreRotatedPositions(results, normalized, enlarged, 0, scale), rect);
+          return results;
+        }
+      }
+    }
   }
   return results.some(isAcceptedBarcode) ? offsetBarcodePositions(results, rect) : [];
+}
+
+async function readCompactColourLabel(pixels, panel, options, deadline) {
+  if (performance.now() >= deadline) return [];
+  const crop = cropBarcodePixels(pixels, panel);
+  const candidateOptions = { ...options, minLineCount: 1 };
+  let results = await readDiagnosticBarcodes(crop, candidateOptions);
+  if (results.some(isAcceptedBarcode)) return offsetBarcodePositions(results, panel);
+  if (performance.now() >= deadline) return [];
+
+  const normalized = normalizeBarcodePixels(crop, 1);
+  if (normalized) {
+    results = await readDiagnosticBarcodes(normalized, candidateOptions);
+    if (results.some(isAcceptedBarcode)) return offsetBarcodePositions(results, panel);
+  }
+  if (!normalized || performance.now() >= deadline) return [];
+
+  // The close camera view contains enough detail in compact labels, but some
+  // phone decoders need more than one source pixel per EAN module.
+  const enlarged = rotateBarcodePixels(normalized, 0, 3);
+  const scale = enlarged.width / normalized.width;
+  if (scale <= 1 || performance.now() >= deadline) return [];
+  results = await decodeBarcodePixels(enlarged, { ...candidateOptions, tryDownscale: false },
+    { orientation: "auto", thorough: true, enhance: true }, deadline);
+  if (!results.some(isAcceptedBarcode)) return [];
+  return offsetBarcodePositions(
+    restoreRotatedPositions(results, normalized, enlarged, 0, scale), panel);
 }
 
 async function verifyRetailRegion(pixels, region, options, deadline) {
@@ -660,7 +708,7 @@ self.onmessage = async ({ data }) => {
       tryDownscale: data.downscale !== false,
       maxNumberOfSymbols: 1,
       textMode: "Plain",
-      minLineCount: Math.max(2, data.minLineCount || 2),
+      minLineCount: Math.max(1, data.minLineCount || 2),
       binarizer: data.binarizer || "LocalAverage"
     };
     // One deadline covers the entire frame, including locating candidates.
@@ -697,10 +745,26 @@ self.onmessage = async ({ data }) => {
     if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
       const quick = { ...options, tryHarder: false, tryDownscale: false, binarizer: "LocalAverage" };
       const dense = { ...quick, tryHarder: true };
+      let colourPanels = null;
+      if (Math.abs(data.regionOffset || 0) % 4 === 0 && performance.now() < deadline) {
+        // Give compact yellow/coloured price labels a decode attempt before a
+        // large whole-frame WASM read can consume this frame's time budget.
+        if (frameDiagnostics) frameDiagnostics.stage = "compact-colour-labels";
+        colourPanels = findColourLabelRegions(pixels);
+        for (const panel of colourPanels.slice(0, 4)) {
+          if (performance.now() >= deadline) break;
+          if (panel.width > pixels.width * 0.7 || panel.width < 72 || panel.height < 28 ||
+              panel.width * panel.height > pixels.width * pixels.height * 0.18) continue;
+          results = await readCompactColourLabel(pixels, panel, dense, deadline);
+          if (results.some(isAcceptedBarcode)) break;
+        }
+      }
       // Preserve a whole-frame read first: a tight crop can occasionally
       // produce a different, checksum-valid EAN-13 from the same bars.
-      if (frameDiagnostics) frameDiagnostics.stage = "full-frame-quick";
-      results = await readDiagnosticBarcodes(pixels, quick);
+      if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+        if (frameDiagnostics) frameDiagnostics.stage = "full-frame-quick";
+        results = await readDiagnosticBarcodes(pixels, quick);
+      }
       const verification = data.verificationRegion;
       if (!results.some(isAcceptedBarcode) && performance.now() < deadline && verification &&
           [verification.x, verification.y, verification.width, verification.height].every(Number.isFinite) &&
@@ -740,7 +804,7 @@ self.onmessage = async ({ data }) => {
         // Small yellow price labels can have little edge contrast against the
         // product behind them. Decode compact colour panels before spending
         // the frame budget ranking unrelated shelf and package stripes.
-        const panels = findColourLabelRegions(pixels);
+        const panels = colourPanels || findColourLabelRegions(pixels);
         if (frameDiagnostics) frameDiagnostics.stage = "compact-colour-labels";
         for (const panel of panels) {
           if (performance.now() >= deadline) break;
@@ -789,7 +853,7 @@ self.onmessage = async ({ data }) => {
         results = await decodeBarcodePixels(pixels, options, data, deadline);
       }
       if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
-        const panels = findColourLabelRegions(pixels);
+        const panels = colourPanels || findColourLabelRegions(pixels);
         if (frameDiagnostics) frameDiagnostics.stage = "label-strip-search";
         const local = [];
         if (panels.length) {

@@ -55,6 +55,10 @@ function requestCaptureStream(deviceId) {
   request.promise = camera.catch(function (error) {
     if (!isCurrent()) throw error;
     if (!["OverconstrainedError", "NotFoundError"].includes(error.name)) throw error;
+    // Never fall back to the browser's default when a specific camera was
+    // selected. That made the menu claim a switch succeeded while reopening
+    // the same camera. A stale saved selection should be shown as an error.
+    if (deviceId) throw error;
     captureDiagnostics.error("camera.requestRetry", error, diagnostic);
     // Retry an unavailable saved camera without changing the requested quality.
     request.videoConstraints = { ...CONFIG.cameraStartupVideo };
@@ -63,6 +67,11 @@ function requestCaptureStream(deviceId) {
     if (!isCurrent()) {
       stream.getTracks().forEach(function (track) { track.stop(); });
       return { error: new DOMException("Capture closed", "AbortError") };
+    }
+    const actualDeviceId = stream.getVideoTracks()[0]?.getSettings?.().deviceId;
+    if (deviceId && actualDeviceId && actualDeviceId !== deviceId) {
+      stream.getTracks().forEach(function (track) { track.stop(); });
+      throw new Error("The browser opened a different camera. Choose another camera and try again.");
     }
     request.stream = stream;
     captureDiagnostics.mark("camera.streamReady", {}, diagnostic);
@@ -106,7 +115,7 @@ function loadCaptureEngine() {
   captureEnginePromise = new Promise(function (resolve, reject) {
     captureDiagnostics.event("captureBundle.loading");
     const script = document.createElement("script");
-    script.src = "js/capture.bundle.js?v=167";
+    script.src = "js/capture.bundle.js?v=169";
     script.onload = function () {
       captureEngineLoaded = true;
       captureDiagnostics.mark("captureBundle.ready");

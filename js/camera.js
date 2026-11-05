@@ -412,8 +412,13 @@ function updateResolutionBadge() {
 }
 
 
-function buildDeviceLabel(device, index) {
-  return device.label || `Camera ${index + 1}`;
+function buildDeviceLabel(device, index, devices = []) {
+  const label = device.label || `Camera ${index + 1}`;
+  const matches = devices.filter((item, itemIndex) =>
+    (item.label || `Camera ${itemIndex + 1}`) === label);
+  if (matches.length < 2) return label;
+  const duplicateIndex = matches.findIndex((item) => item === device);
+  return `${label} ${duplicateIndex + 1}`;
 }
 
 
@@ -505,7 +510,7 @@ async function refreshDevices(preferredDeviceId, expectedStream) {
     const device = state.devices[index];
     const option = document.createElement("option");
     option.value = device.deviceId;
-    option.textContent = buildDeviceLabel(device, index);
+    option.textContent = buildDeviceLabel(device, index, state.devices);
     option.selected = device.deviceId === currentId;
     state.els.cameraSelect.appendChild(option);
   }
@@ -915,14 +920,14 @@ function makeDetectionPass(attempt) {
   const phase = attempt % 4;
   return {
     mode: getDetectionCropModes()[phase],
-    // Leave enough time for a central label read on slower phones; expensive
-    // contrast and rotation retries still run only every fourth pass.
+    // Keep ordinary passes short, with periodic longer reads for faint, small
+    // labels before the scanner advances to the next fresh camera frame.
     thorough: true,
     enhance: phase === 3,
     // Prefer another camera frame after a short attempt; every fourth pass
     // gets more time for angled, faint or distant labels. Confirmation reuses
     // the successful crop and gets time to verify it on the next fresh frame.
-    budgetMs: phase === 3 ? 300 : 120,
+    budgetMs: phase === 0 ? 500 : phase === 3 ? 350 : 120,
     // Periodic whole-preview reads and rotating candidate priority prevent
     // background text from starving another barcode region.
     // Dedicated whole-preview passes also try fixed angles, independent of
@@ -1216,11 +1221,11 @@ async function startCameraStream(preferredCameraId) {
 
   const request = state.captureRequest || requestCaptureStream(preferredCameraId);
   const result = await request.promise;
+  if (state.captureRequest === request) state.captureRequest = null;
   if (result.error) throw result.error;
   const stream = result.stream;
   const playback = request.playback;
   request.stream = null;
-  if (state.captureRequest === request) state.captureRequest = null;
   if (!state.capturePageOpen || generation !== state.captureGeneration || session !== state.scanSession) {
     stream.getTracks().forEach((track) => track.stop());
     throw new DOMException("Camera start canceled", "AbortError");
@@ -2078,10 +2083,33 @@ async function handleSelectChange() {
   if (!selectedId || selectedId === state.activeDeviceId) return;
 
   const shouldResumeScanning = state.isScanning;
-  saveCameraId(selectedId);
-  if (!state.capturePageOpen) { state.activeDeviceId = selectedId; return; }
+  if (!state.capturePageOpen) {
+    state.activeDeviceId = selectedId;
+    saveCameraId(selectedId);
+    return;
+  }
+  const previousId = state.activeDeviceId;
   stopScanning(true);
-  await startCamera(selectedId);
+  try {
+    await startCamera(selectedId);
+  } catch (error) {
+    // A failed switch stops the old track before opening the requested source.
+    // Reopen the previous camera and put the selector back so its value always
+    // describes the camera actually feeding the preview.
+    try { await startCamera(previousId); }
+    catch (restoreError) {
+      captureDiagnostics.error("camera.switchRestore", restoreError);
+    }
+    const actualId = state.track?.getSettings?.().deviceId || previousId;
+    if (actualId) {
+      state.activeDeviceId = actualId;
+      saveCameraId(actualId);
+      state.els.cameraSelect.value = actualId;
+    }
+    setStatus(error.message || "Could not switch camera", "Camera switch failed");
+    if (shouldResumeScanning && state.isCameraRunning) await startScanning();
+    return;
+  }
   if (shouldResumeScanning) {
     await startScanning();
   }
