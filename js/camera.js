@@ -559,10 +559,9 @@ function getSquareCropSize(video) {
 
 
 function getDetectionCropModes() {
-  // Spend most fresh frames on the aim window, with one wider pass that can
-  // recover quiet zones clipped by the reticle. Every result still passes the
-  // all-corners reticle gate before it can count as a read.
-  return ["reticle", "reticleDetail", "reticle", "expanded"];
+  // Scan the full camera view on every pass. A confirmed barcode may still get
+  // a local follow-up read, while misses always return to the full view.
+  return ["visible", "visible", "visible", "visible"];
 }
 
 
@@ -608,80 +607,6 @@ function getCaptureSetting(name, fallback) {
 }
 
 
-// Fixed 240 x 130 dp reticle matching the APK capture architecture.
-// Real DOM bounds take precedence, with a 240 x 130 dp centered fallback.
-function getReticleCssRect() {
-  const frame = state.els?.previewFrame;
-  if (!frame) return null;
-  const frameBox = typeof frame.getBoundingClientRect === "function" ? frame.getBoundingClientRect() : null;
-  const frameWidth = Number(frame.clientWidth || frameBox?.width || 0);
-  const frameHeight = Number(frame.clientHeight || frameBox?.height || 0);
-  if (!(frameWidth > 0 && frameHeight > 0)) return null;
-
-  const reticle = state.els?.scanReticle;
-  let left = 0, top = 0, width = 0, height = 0;
-  if (reticle && typeof reticle.getBoundingClientRect === "function" && frameBox) {
-    const box = reticle.getBoundingClientRect();
-    if (box.width > 0 && box.height > 0) {
-      left = box.left - frameBox.left;
-      top = box.top - frameBox.top;
-      width = box.width;
-      height = box.height;
-    }
-  } else if (reticle && Number(reticle.offsetWidth) > 0 && Number(reticle.offsetHeight) > 0) {
-    left = Number(reticle.offsetLeft) || 0;
-    top = Number(reticle.offsetTop) || 0;
-    width = Number(reticle.offsetWidth);
-    height = Number(reticle.offsetHeight);
-  }
-
-  if (!(width > 0 && height > 0)) {
-    const targetWidth = getCaptureSetting("reticleTargetWidth", 240);
-    const targetHeight = getCaptureSetting("reticleTargetHeight", 130);
-    width = Math.min(frameWidth, targetWidth);
-    height = Math.min(frameHeight, targetHeight);
-    left = (frameWidth - width) / 2;
-    top = (frameHeight - height) / 2;
-  }
-
-  width = Math.min(frameWidth, Math.max(1, width));
-  height = Math.min(frameHeight, Math.max(1, height));
-  left = Math.max(0, Math.min(frameWidth - width, left));
-  top = Math.max(0, Math.min(frameHeight - height, top));
-  return { left, top, width, height, frameWidth, frameHeight };
-}
-
-
-function getReticleSourceRect() {
-  const video = state.els?.cameraPreview;
-  const videoWidth = Number(video?.videoWidth || 0);
-  const videoHeight = Number(video?.videoHeight || 0);
-  if (!(videoWidth > 0 && videoHeight > 0)) return null;
-
-  const css = getReticleCssRect();
-  if (!css) {
-    const targetWidth = getCaptureSetting("reticleTargetWidth", 240);
-    const targetHeight = getCaptureSetting("reticleTargetHeight", 130);
-    const width = Math.min(videoWidth, targetWidth);
-    const height = Math.min(videoHeight, targetHeight);
-    return { x: (videoWidth - width) / 2, y: (videoHeight - height) / 2, width, height };
-  }
-
-  const cover = getCoverSourceRect(videoWidth, videoHeight, css.frameWidth, css.frameHeight);
-  const scaleX = cover.visibleWidth / css.frameWidth;
-  const scaleY = cover.visibleHeight / css.frameHeight;
-  let x = cover.offsetX + css.left * scaleX;
-  let y = cover.offsetY + css.top * scaleY;
-  let width = css.width * scaleX;
-  let height = css.height * scaleY;
-  x = Math.max(0, Math.min(videoWidth - 1, x));
-  y = Math.max(0, Math.min(videoHeight - 1, y));
-  width = Math.max(1, Math.min(videoWidth - x, width));
-  height = Math.max(1, Math.min(videoHeight - y, height));
-  return { x, y, width, height };
-}
-
-
 function mapWorkerRegionToSource(region, frame) {
   if (!region || !frame) return null;
   const values = [region.x, region.y, region.width, region.height,
@@ -702,53 +627,6 @@ function mapWorkerPointToSource(point, frame) {
     x: frame.sx + point.x * frame.sw / frame.outputWidth,
     y: frame.sy + point.y * frame.sh / frame.outputHeight
   };
-}
-
-
-function pointInsideRect(point, rect, epsilon = 0.5) {
-  return Boolean(point && rect) &&
-    point.x >= rect.x - epsilon && point.x <= rect.x + rect.width + epsilon &&
-    point.y >= rect.y - epsilon && point.y <= rect.y + rect.height + epsilon;
-}
-
-
-// All decoded barcode corners must be inside the visible reticle. A decoded
-// bounding region is accepted only when corner metadata is unavailable.
-// Requires non-degenerate span (maxX > minX && maxY > minY).
-function evaluateReticleGate(resultInfo) {
-  const reticle = getReticleSourceRect();
-  if (!reticle || !(reticle.width > 0) || !(reticle.height > 0)) {
-    return { accepted: false, reason: "reticle-unavailable" };
-  }
-  const corners = Array.isArray(resultInfo?.corners) && resultInfo.corners.length >= 4
-    ? resultInfo.corners.slice(0, 4) : null;
-  if (corners?.every((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y))) {
-    const minX = Math.min(...corners.map(p => p.x));
-    const maxX = Math.max(...corners.map(p => p.x));
-    const minY = Math.min(...corners.map(p => p.y));
-    const maxY = Math.max(...corners.map(p => p.y));
-    if (!(maxX > minX && maxY > minY)) {
-      return { accepted: false, reason: "degenerate-span", reticle };
-    }
-    const allInside = corners.every((point) => pointInsideRect(point, reticle));
-    return { accepted: allInside,
-      reason: allInside ? "corners-inside" : "corners-outside",
-      reticle };
-  }
-  const region = resultInfo?.region;
-  if (region && Number.isFinite(region.x) && Number.isFinite(region.y) &&
-      Number.isFinite(region.width) && Number.isFinite(region.height) &&
-      region.width > 0 && region.height > 0) {
-    const boxCorners = [
-      { x: region.x, y: region.y },
-      { x: region.x + region.width, y: region.y },
-      { x: region.x + region.width, y: region.y + region.height },
-      { x: region.x, y: region.y + region.height }
-    ];
-    const allInside = boxCorners.every((point) => pointInsideRect(point, reticle));
-    return { accepted: allInside, reason: allInside ? "region-inside" : "region-outside", reticle };
-  }
-  return { accepted: false, reason: "no-corners", reticle };
 }
 
 
@@ -780,19 +658,6 @@ function getDetectionFrameGeometry(mode, maxOutputSize = 1920) {
     sh = Math.min(videoHeight, Math.max(420, videoHeight * 0.36));
     sx = Math.max(0, Math.min(videoWidth - sw, point.x * videoWidth - sw / 2));
     sy = Math.max(0, Math.min(videoHeight - sh, point.y * videoHeight - sh / 2));
-  } else if (mode === "reticle" || mode === "reticleDetail") {
-    // Analyze the operator's actual aim window first, at sensor resolution.
-    // Wider fallback passes still run so a clipped quiet zone can be recovered;
-    // the final gate above keeps the accepted barcode inside this same window.
-    const reticle = getReticleSourceRect();
-    if (reticle) {
-      sx = reticle.x; sy = reticle.y; sw = reticle.width; sh = reticle.height;
-    } else {
-      sw = videoWidth * getCaptureSetting("reticleWidthRatio", 0.84);
-      sh = videoHeight * getCaptureSetting("reticleHeightRatio", 0.32);
-      sx = (videoWidth - sw) / 2;
-      sy = (videoHeight - sh) / 2;
-    }
   } else if (mode === "expanded" || mode === "detail" || mode === "visible") {
     const container = state.els.previewFrame;
     const cover = getCoverSourceRect(videoWidth, videoHeight,
@@ -836,24 +701,12 @@ function getDetectionFrameGeometry(mode, maxOutputSize = 1920) {
   sw = Math.max(1, Math.min(videoWidth - sx, Math.round(sw)));
   sh = Math.max(1, Math.min(videoHeight - sy, Math.round(sh)));
   let scale;
-  if (mode === "reticle" || mode === "reticleDetail") {
-    const maxWidth = getCaptureSetting("reticleAnalysisMaxWidth", 1280);
-    const maxHeight = getCaptureSetting("reticleAnalysisMaxHeight", 720);
-    const maxPixels = getCaptureSetting("reticleAnalysisMaxPixels", 921600);
-    const limit = Math.min(1, maxWidth / sw, maxHeight / sh, Math.sqrt(maxPixels / (sw * sh)));
-    scale = limit;
-    if (mode === "reticleDetail" && limit >= 1) {
-      scale = Math.min(getCaptureSetting("reticleDetailMaxScale", 2),
-        maxWidth / sw, maxHeight / sh, Math.sqrt(maxPixels / (sw * sh)));
-    }
-  } else {
-    scale = Math.min(mode === "detail" ? 2 : 1, maxOutputSize / Math.max(sw, sh));
-  }
+  scale = Math.min(mode === "detail" ? 2 : 1, maxOutputSize / Math.max(sw, sh));
   const outputWidth = Math.max(1, Math.round(sw * scale));
   const outputHeight = Math.max(1, Math.round(sh * scale));
 
   return { sx, sy, sw, sh, outputWidth, outputHeight, videoWidth, videoHeight,
-    imageSmoothingEnabled: mode === "detail" || mode === "reticleDetail" };
+    imageSmoothingEnabled: mode === "detail" };
 }
 
 
@@ -1016,11 +869,6 @@ async function detectBarcodeInFrame(frameTiming = {}) {
         if (session !== state.scanSession || focusRevision !== (state.focusTargetRevision || 0)) return;
         const mapped = mapWorkerRegionToSource(region, frameGeometry);
         if (!mapped) return;
-        const progressGate = evaluateReticleGate({ region: mapped });
-        if (!progressGate.accepted) {
-          captureDiagnostics.event("barcode.reticleProgressRejected", { reason: progressGate.reason }, diagnostic);
-          return;
-        }
         workerRegion = mapped;
         state.lastBarcodeRegion = mapped;
         updateBarcodeTracking(region, frameGeometry, session);
@@ -1032,19 +880,10 @@ async function detectBarcodeInFrame(frameTiming = {}) {
       }
     }
     if (text) {
-      // The worker returns decoded corners in the analyzed crop's coordinates.
-      // Require every corner to fit inside the visible aim window.
       const info = resultInfo || (workerRegion ? { format: "", corners: null, region: workerRegion } : null);
-      const gate = evaluateReticleGate(info);
-      if (!gate.accepted) {
-        state.lastDetectionRejection = { reason: gate.reason, at: performance.now() };
-        captureDiagnostics.event("barcode.reticleRejected", { reason: gate.reason, cropMode }, diagnostic);
-        text = "";
-      } else {
-        acceptedInfo = { format: info?.format || "", corners: info?.corners || null,
-          region: info?.region || workerRegion || null };
-        state.lastDetectionRejection = null;
-      }
+      acceptedInfo = { format: info?.format || "", corners: info?.corners || null,
+        region: info?.region || workerRegion || null };
+      state.lastDetectionRejection = null;
     }
   } catch (error) {
     if (!videoFrame || !["FramePreparationError", "FrameTransferError"].includes(error.name)) throw error;
@@ -1309,12 +1148,8 @@ async function captureAttempt(session) {
     if (focus?.mode === "single-shot" && !focus.manualPoint && Date.now() - focus.updatedAt >= 2000) {
       requestFocusRefresh(state.track, { force: true }).catch(() => {});
     }
-    // Keep scanning fresh frames with the next reticle/detail pass.
-    const rejection = state.lastDetectionRejection;
-    const recentlyRejected = rejection && performance.now() - rejection.at < 300 &&
-      rejection.reason !== "reticle-unavailable";
-    setStatus(recentlyRejected ? "Fit barcode inside frame" :
-      state.pendingConfirmCode ? "Confirming code…" : "Scanning barcode…");
+    // Keep scanning fresh frames across the full camera view.
+    setStatus(state.pendingConfirmCode ? "Confirming code…" : "Scanning barcode…");
     return false;
   }
 

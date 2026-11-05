@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=165");
+importScripts("capture-frame-worker.js?v=167");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -923,7 +923,7 @@ self.onmessage = async ({ data }) => {
         const x = Math.min(...points.map((p) => p.x)), y = Math.min(...points.map((p) => p.y));
         const right = Math.max(...points.map((p) => p.x)), bottom = Math.max(...points.map((p) => p.y));
         decodedRegion = { x, y, width: Math.max(1, right - x), height: Math.max(1, bottom - y) };
-        // Keep all four corners so the page can apply the visible reticle gate.
+        // Keep all four corners for the live barcode tracking outline.
         corners = points.map((point) => ({ x: point.x, y: point.y }));
         if (data.trackRegions) self.postMessage({ id: data.id, type: "region", region: decodedRegion });
       }

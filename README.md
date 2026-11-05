@@ -22,9 +22,19 @@ python -m http.server 8765 --bind 127.0.0.1
 
 Open http://localhost:8765. Camera access requires localhost or HTTPS.
 Deploy this directory to an HTTPS static host; no build server is required.
-Upload `index.html`, `sw.js`, `manifest.webmanifest`, the three icon PNGs, and
+Upload `index.html`, `sw.js`, both `manifest*.webmanifest` files, the three icon PNGs, and
 the `css/` and `js/` folders including `js/vendor/`. The `docs/`, `previews/`,
 and `tests/` folders are optional and are not loaded by the webapp.
+
+### iPhone camera permission
+
+iOS Home Screen web apps currently ask for camera permission again after each
+cold launch. The iPhone manifest therefore opens the scanner in Safari browser
+mode, where Safari can retain the website's camera permission. Android keeps
+the standalone app mode. After deploying this change, remove the old Home Screen
+icon and add the site again from Safari. In Safari's page settings, set Camera
+to **Allow** for this site if you want to suppress future prompts. See
+[WebKit issue 327237](https://bugs.webkit.org/show_bug.cgi?id=327237).
 
 ## Source and builds
 
