@@ -51,7 +51,7 @@
               return new Promise((resolveFrame, rejectFrame) => {
                 const id = ++sequence;
                 pending = { id, resolve: resolveFrame, reject: rejectFrame, onRegion: options.onRegion, onFocus: options.onFocus,
-                  onResult: options.onResult, onDiagnostics: options.onDiagnostics,
+                  onDiagnostics: options.onDiagnostics,
                   timer: setTimeout(() => fail(new Error("Scanner read timed out. Please retry.")), 10000) };
                 try {
                   worker.postMessage({ id, buffer: image.videoFrame ? undefined : image.data.buffer,
@@ -94,13 +94,8 @@
             const failure = new Error(data.error);
             if (data.framePreparationFailed) failure.name = "FramePreparationError";
             request.reject(failure);
-          } else {
-            try {
-              request.onResult?.({ text: data.text || "", format: data.format || "",
-                corners: data.corners || null, region: data.region || null });
-            } catch (_) { /* Optional metadata cannot interrupt a decode. */ }
-            request.resolve(data.text);
           }
+          else request.resolve(data.text);
         }
       };
     }).catch((error) => {

@@ -179,12 +179,8 @@ function rotateBarcodePixels(pixels, angle, enlargement = 1) {
   return output;
 }
 
-const MATRIX_FORMATS = new Set(["Aztec", "DataMatrix", "MaxiCode", "PDF417", "QRCode", "MicroQRCode", "rMQRCode"]);
 function isAcceptedBarcode(result) {
   if (!result?.isValid) return false;
-  // Only linear retail/product labels are configured, but reject matrix
-  // symbologies defensively if a decoder build or future caller adds them.
-  if (MATRIX_FORMATS.has(result.format)) return false;
   // ZXing's ITF14 format filter can still return generic ITF fragments.
   // Retail ITF-14 needs all 14 digits and its GS1 check digit.
   if (/^ITF/.test(result.format)) {
@@ -884,15 +880,13 @@ self.onmessage = async ({ data }) => {
       results = await decodeBarcodePixels(pixels, options, data, deadline);
     }
     const result = results.find(isAcceptedBarcode);
-    let decodedRegion = null, corners = null;
+    let decodedRegion = null;
     if (result?.position) {
       const points = Object.values(result.position);
       if (points.length === 4 && points.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))) {
         const x = Math.min(...points.map((p) => p.x)), y = Math.min(...points.map((p) => p.y));
         const right = Math.max(...points.map((p) => p.x)), bottom = Math.max(...points.map((p) => p.y));
         decodedRegion = { x, y, width: Math.max(1, right - x), height: Math.max(1, bottom - y) };
-        // Keep all four corners so the page can apply the visible reticle gate.
-        corners = points.map((point) => ({ x: point.x, y: point.y }));
         if (data.trackRegions) self.postMessage({ id: data.id, type: "region", region: decodedRegion });
       }
     }
@@ -913,7 +907,7 @@ self.onmessage = async ({ data }) => {
       diagnostics.decodedRegion = decodedRegion;
       diagnostics.readsTruncated = diagnostics.wasmCalls > diagnostics.reads.length;
     }
-    self.postMessage({ id: data.id, text, format: result?.format || "", corners, region: decodedRegion, diagnostics });
+    self.postMessage({ id: data.id, text, diagnostics });
   } catch (error) {
     if (error === decodeBudgetExhausted) {
       if (frameDiagnostics) frameDiagnostics.preprocessingBudgetExhausted = true;

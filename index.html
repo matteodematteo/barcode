@@ -119,36 +119,6 @@
       background-size: 22% 22%;
       mask-image: linear-gradient(180deg, rgba(0,0,0,.72), transparent 85%);
     }
-    .scan-reticle {
-      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-      width: min(240px, calc(100% - 24px)); height: min(130px, calc(100% - 24px));
-      box-sizing: border-box;
-      z-index: 2; border: 1px solid rgba(255,255,255,.25); border-radius: 14px;
-      box-shadow: 0 0 0 9999px rgba(0,0,0,.45), inset 0 0 16px rgba(0,0,0,.18);
-      pointer-events: none; opacity: .95;
-    }
-    .reticle-corner {
-      position: absolute; width: 20px; height: 20px;
-      border: 0 solid rgba(255,255,255,.96);
-      filter: drop-shadow(0 1px 2px rgba(0,0,0,.7));
-    }
-    .reticle-corner.tl { top: -1px; left: -1px; border-top-width: 3.5px; border-left-width: 3.5px; border-top-left-radius: 14px; }
-    .reticle-corner.tr { top: -1px; right: -1px; border-top-width: 3.5px; border-right-width: 3.5px; border-top-right-radius: 14px; }
-    .reticle-corner.bl { bottom: -1px; left: -1px; border-bottom-width: 3.5px; border-left-width: 3.5px; border-bottom-left-radius: 14px; }
-    .reticle-corner.br { bottom: -1px; right: -1px; border-bottom-width: 3.5px; border-right-width: 3.5px; border-bottom-right-radius: 14px; }
-    .reticle-line {
-      position: absolute; left: 6%; right: 6%; top: 6%; height: 2px; border-radius: 999px;
-      background: linear-gradient(90deg, transparent, rgba(255,175,141,.95), transparent);
-      box-shadow: 0 0 16px rgba(255,146,92,.85); opacity: 0;
-    }
-    .preview-frame.is-scanning .reticle-line { opacity: 1; animation: reticleScan 1.8s ease-in-out infinite; }
-    @keyframes reticleScan {
-      0%, 100% { top: 6%; }
-      50% { top: 92%; }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .reticle-line { animation: none !important; opacity: 0 !important; }
-    }
     .preview-placeholder {
       display: grid; place-items: center; padding: 16px; text-align: center;
       color: rgba(255,255,255,.9);
@@ -574,11 +544,6 @@
         <video id="cameraPreview" playsinline webkit-playsinline muted disablepictureinpicture></video>
         <div id="cameraPreviewQuagga" hidden></div>
         <div class="preview-grid" aria-hidden="true"></div>
-        <div class="scan-reticle" id="scanReticle" aria-hidden="true">
-          <span class="reticle-corner tl"></span><span class="reticle-corner tr"></span>
-          <span class="reticle-corner bl"></span><span class="reticle-corner br"></span>
-          <span class="reticle-line"></span>
-        </div>
         <div class="focus-target" id="focusTarget" aria-hidden="true" hidden></div>
         <div class="focus-hint" id="focusHint" role="status" aria-live="polite">Tap preview to focus</div>
         <div class="barcode-tracker" id="barcodeTracker" aria-hidden="true" hidden>
