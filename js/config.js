@@ -33,7 +33,8 @@ const CONFIG = {
     confirmationMaxMisses: 3,
     // Focus system parity with APK: 700 ms next-scan reuse, 0.01 tolerance lock,
     // 90-sample focus distance ring buffer, 100 ms frame timestamp match window.
-    focusMemoryWindowMs: 700,
+    // Retained lens distance stays locked until a user tap or camera change.
+    focusMemoryWindowMs: 0,
     focusDistanceTolerance: 0.01,
     focusMeteringPointSize: 0.15,
     focusAutoCancelMs: 1500,

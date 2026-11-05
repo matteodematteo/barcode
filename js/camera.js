@@ -128,12 +128,10 @@ function clearFocusRefreshTimers() {
     focus.manualPoint = false;
     focus.scanPoint = null;
     // Keep distanceMemory across a captured close: the live stream stays ready
-    // and the next scan can start at the last sharp lens position.
+    // and the next scan keeps the same manual lens position without reapplying
+    // constraints or restarting autofocus.
     if (focus.holdTimer) window.clearTimeout(focus.holdTimer);
     focus.holdTimer = 0;
-    focus.holdActive = false;
-    focus.holdMemory = 0;
-    focus.holdStartedAt = 0;
   }
   if (state.els?.focusTarget) state.els.focusTarget.hidden = true;
   window.clearTimeout(previewFocusFeedbackTimer);
@@ -1272,6 +1270,7 @@ async function startCameraStream(preferredCameraId) {
 
 // Track-specific state prevents old camera requests affecting a new stream.
 const cameraFocusStates = new WeakMap();
+const focusDistanceMemories = new Map();
 const cameraConstraintQueues = new WeakMap();
 const cameraTrackConstraints = new WeakMap();
 
@@ -1379,9 +1378,22 @@ function getCameraFocusState(track) {
   let focus = cameraFocusStates.get(track);
   if (!focus) {
     focus = createCameraFocusState();
+    const deviceId = track?.getSettings?.().deviceId;
+    if (deviceId) focus.distanceMemory = focusDistanceMemories.get(deviceId) || null;
     cameraFocusStates.set(track, focus);
   }
   return focus;
+}
+
+function saveFocusDistanceMemory(track, memory) {
+  const deviceId = track?.getSettings?.().deviceId;
+  if (!deviceId || !memory) return;
+  focusDistanceMemories.delete(deviceId);
+  focusDistanceMemories.set(deviceId, memory);
+  // Keep this small, page-local cache bounded when users switch among lenses.
+  while (focusDistanceMemories.size > 8) {
+    focusDistanceMemories.delete(focusDistanceMemories.keys().next().value);
+  }
 }
 
 
@@ -1396,6 +1408,7 @@ function rememberFocusDistance(track) {
         !Number.isFinite(distance) || distance < range.min || distance > range.max) return false;
     focus.distanceMemory = { distance, min: range.min, max: range.max,
       step: Number(range.step) > 0 ? Number(range.step) : 0, rememberedAt: Date.now() };
+    saveFocusDistanceMemory(track, focus.distanceMemory);
     captureDiagnostics.event("focus.distanceRemembered", {
       distance: Math.round(distance * 1000) / 1000 }, captureDiagnostics.current);
     return true;
@@ -1420,7 +1433,7 @@ function canDeviceSupportManualFocus(track) {
 
 function canUseFocusDistanceMemory(track) {
   if (!canDeviceSupportManualFocus(track)) return false;
-  const memory = cameraFocusStates.get(track)?.distanceMemory;
+  const memory = getCameraFocusState(track).distanceMemory;
   if (!memory || !Number.isFinite(memory.distance)) return false;
   const range = track.getCapabilities?.().focusDistance;
   return memory.distance >= range.min && memory.distance <= range.max;
@@ -1481,6 +1494,7 @@ async function latchFocusDistance(track, distance) {
   }
   focus.distanceMemory = { distance: clamped, min: range.min, max: range.max,
     step: Number(range.step) > 0 ? Number(range.step) : 0, rememberedAt: Date.now() };
+  saveFocusDistanceMemory(track, focus.distanceMemory);
   try {
     const applied = await applyCameraTrackConstraints(track,
       { focusMode: "manual", focusDistance: clamped }, state.scanSession);
@@ -1496,8 +1510,7 @@ async function latchFocusDistance(track, distance) {
   return false;
 }
 
-// Apply the remembered distance before the decoder finishes loading. The
-// 700 ms reuse window does not start until the decoder is ready.
+// Restore the remembered distance before the decoder finishes loading.
 async function prepareFocusDistanceHold(track, session) {
   if (!state.capturePageOpen || !isCurrentCameraTrack(track) ||
       !canUseFocusDistanceMemory(track) || !track.applyConstraints) return false;
@@ -1542,21 +1555,9 @@ async function prepareFocusDistanceHold(track, session) {
 function finishFocusDistanceHold(track, session) {
   const focus = cameraFocusStates.get(track);
   if (!focus?.holdActive || session !== state.scanSession || !isCurrentCameraTrack(track)) return false;
-  focus.holdStartedAt = Date.now();
-  const windowMs = getCaptureSetting("focusMemoryWindowMs", 700);
-  const timer = window.setTimeout(function () {
-    if (session !== state.scanSession || !isCurrentCameraTrack(track) || !focus.holdActive) return;
-    focus.holdActive = false;
-    focus.holdTimer = 0;
-    captureDiagnostics.event("focus.memoryHoldExpired", {
-      heldMs: Math.round(Date.now() - focus.holdStartedAt) }, captureDiagnostics.current);
-    requestFocusRefresh(track, { force: true, newScan: true, session }).catch(function () {});
-  }, windowMs);
-  focus.holdTimer = timer;
-  if (!Array.isArray(state.focusRefreshTimers)) state.focusRefreshTimers = [];
-  state.focusRefreshTimers.push(timer);
+  focus.holdStartedAt ||= Date.now();
   captureDiagnostics.event("focus.memoryHoldStarted", {
-    windowMs, distance: focus.holdMemory }, captureDiagnostics.current);
+    persistent: true, distance: focus.holdMemory }, captureDiagnostics.current);
   return true;
 }
 
@@ -1584,6 +1585,8 @@ async function requestFocusRefresh(track, options = {}) {
     }
     // A tap can point at a new distance; do not reuse the old lens position.
     focus.distanceMemory = null;
+    const deviceId = track.getSettings?.().deviceId;
+    if (deviceId) focusDistanceMemories.delete(deviceId);
     focus.manualPoint = true;
     if (options.point) focus.scanPoint = { x: options.point.x, y: options.point.y };
     state.focusTargetRevision = (state.focusTargetRevision || 0) + 1;
@@ -1629,13 +1632,12 @@ async function requestFocusRefresh(track, options = {}) {
     // A tap actively triggers a sweep when supported, rather than waiting for
     // continuous focus to notice a new target. Keep the result without a timed
     // mode switch, and restore continuous focus on the next capture.
-    const resetPoint = options.newScan && focus.point && (focus.point.x !== 0.5 || focus.point.y !== 0.5);
-    const force = options.manual || options.force || resetPoint;
+    const force = options.manual || options.force;
     if (!force && (mode === "continuous" && settings.focusMode === mode ||
         focus.mode === mode && (!settings.focusMode || settings.focusMode === mode))) {
       captureDiagnostics.event("focus.alreadyRunning", { mode }, diagnostic); return true;
     }
-    if (force && !options.manual && !resetPoint && now - focus.lastForcedAt < 700) return false;
+    if (force && !options.manual && now - focus.lastForcedAt < 700) return false;
     if (force) focus.lastForcedAt = now;
 
     let point;
@@ -1643,7 +1645,7 @@ async function requestFocusRefresh(track, options = {}) {
         navigator.mediaDevices?.getSupportedConstraints?.().pointsOfInterest) {
       // Barcodes are aimed at the frame center; default new scans there so
       // the focus hunt targets the label. An explicit tap point still wins.
-      const sourcePoint = options.point || (options.newScan ? { x: 0.5, y: 0.5 } : null);
+      const sourcePoint = options.point || (options.newScan ? focus.point || { x: 0.5, y: 0.5 } : null);
       if (sourcePoint) {
         point = { x: Math.max(0, Math.min(1, sourcePoint.x)),
           y: Math.max(0, Math.min(1, sourcePoint.y)) };
