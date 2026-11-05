@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=174");
+importScripts("capture-frame-worker.js?v=175");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -887,19 +887,6 @@ self.onmessage = async ({ data }) => {
       const quick = { ...options, tryHarder: false, tryDownscale: false, binarizer: "LocalAverage" };
       const dense = { ...quick, tryHarder: true };
       let colourPanels = null;
-      if (Math.abs(data.regionOffset || 0) % 4 === 0 && performance.now() < deadline) {
-        // Give compact yellow/coloured price labels a decode attempt before a
-        // large whole-frame WASM read can consume this frame's time budget.
-        if (frameDiagnostics) frameDiagnostics.stage = "compact-colour-labels";
-        colourPanels = findColourLabelRegions(pixels);
-        for (const panel of colourPanels.slice(0, 4)) {
-          if (performance.now() >= deadline) break;
-          if (panel.width > pixels.width * 0.7 || panel.width < 72 || panel.height < 28 ||
-              panel.width * panel.height > pixels.width * pixels.height * 0.18) continue;
-          results = await readCompactColourLabel(pixels, panel, dense, deadline);
-          if (results.some(isAcceptedBarcode)) break;
-        }
-      }
       // Preserve a whole-frame read first: a tight crop can occasionally
       // produce a different, checksum-valid EAN-13 from the same bars.
       if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
@@ -915,6 +902,19 @@ self.onmessage = async ({ data }) => {
         // crop misread found in the supplied EAN-13 label photos.
         if (frameDiagnostics) frameDiagnostics.stage = "retail-verification-region";
         results = await verifyRetailRegion(pixels, verification, dense, deadline, data.verificationCode || "");
+      }
+      if (!results.some(isAcceptedBarcode) && Math.abs(data.regionOffset || 0) % 4 === 3 && performance.now() < deadline) {
+        // Spend periodic longer passes on compact coloured labels after the
+        // quick full-preview read and any pending retail verification.
+        if (frameDiagnostics) frameDiagnostics.stage = "compact-colour-labels";
+        colourPanels = findColourLabelRegions(pixels);
+        for (const panel of colourPanels.slice(0, 4)) {
+          if (performance.now() >= deadline) break;
+          if (panel.width > pixels.width * 0.7 || panel.width < 72 || panel.height < 28 ||
+              panel.width * panel.height > pixels.width * pixels.height * 0.18) continue;
+          results = await readCompactColourLabel(pixels, panel, dense, deadline);
+          if (results.some(isAcceptedBarcode)) break;
+        }
       }
       let globalStrips = [];
       if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
