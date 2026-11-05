@@ -40,6 +40,12 @@ const ZXING_FORMAT_MAP = {
   code_93: "Code93", data_bar: "DataBar", data_bar_expanded: "DataBarExpanded"
 };
 
+// 2D formats rejected defensively per Android APK architecture
+const MATRIX_FORMATS = new Set([
+  "Aztec", "DataMatrix", "MaxiCode", "PDF417", "QRCode", "MicroQRCode", "rMQRCode",
+  "QR_CODE", "DATA_MATRIX", "AZTEC", "PDF417"
+]);
+
 async function createDetector() {
   return window.ensureZXingLoaded();
 }
@@ -121,6 +127,13 @@ function clearFocusRefreshTimers() {
     focus.manualRequest += 1;
     focus.manualPoint = false;
     focus.scanPoint = null;
+    // Keep distanceMemory across a captured close: the live stream stays ready
+    // and the next scan can start at the last sharp lens position.
+    if (focus.holdTimer) window.clearTimeout(focus.holdTimer);
+    focus.holdTimer = 0;
+    focus.holdActive = false;
+    focus.holdMemory = 0;
+    focus.holdStartedAt = 0;
   }
   if (state.els?.focusTarget) state.els.focusTarget.hidden = true;
   window.clearTimeout(previewFocusFeedbackTimer);
@@ -242,7 +255,7 @@ async function recoverPreviewFromFreeze() {
   }
 
   state.isRecoveringPreview = true;
-  const selectedDeviceId = state.activeDeviceId || state.els.cameraSelect.value;
+  const selectedDeviceId = state.activeDeviceId || state.els?.cameraSelect?.value;
   stopScanning(true);
   setStatus("Reconnecting camera…");
 
@@ -252,10 +265,10 @@ async function recoverPreviewFromFreeze() {
     await startScanning();
     disarmFirstGestureCameraStart();
   } catch (error) {
-    if (isCameraPermissionError(error)) {
-      state.els.captureRetryBtn.hidden = false;
+    if (isCameraPermissionError(error) || (state.previewRecoveryAttempts || 0) >= getCaptureSetting("previewRecoveryMaxAttempts", 2)) {
+      if (state.els?.captureRetryBtn) state.els.captureRetryBtn.hidden = false;
     }
-    setStatus(error.message || "Camera preview recovery failed", "Camera unavailable");
+    setStatus(error.message || "Camera preview unavailable. Tap to retry.", "Camera unavailable");
   } finally {
     state.isRecoveringPreview = false;
   }
@@ -269,6 +282,7 @@ function startPreviewWatchdog() {
   }
 
   state.lastPreviewTime = Number(getPreviewVideoElement()?.currentTime || 0);
+  state.lastHealthyPreviewAt = performance.now();
   state.previewWatchdogTimer = window.setInterval(function () {
     if (!state.capturePageOpen || !state.isCameraRunning || state.isRecoveringPreview || document.hidden) {
       return;
@@ -280,20 +294,38 @@ function startPreviewWatchdog() {
     }
 
     const currentTime = Number(video.currentTime || 0);
+    const now = performance.now();
     if (Math.abs(currentTime - state.lastPreviewTime) < 0.01) {
-      state.stalledPreviewChecks += 1;
+      state.stalledPreviewChecks = (state.stalledPreviewChecks || 0) + 1;
     } else {
       state.lastPreviewTime = currentTime;
       state.stalledPreviewChecks = 0;
+      // 15 s of continuous health resets retry count
+      if (now - (state.lastHealthyPreviewAt || now) >= getCaptureSetting("previewHealthResetMs", 15000)) {
+        state.previewRecoveryAttempts = 0;
+      }
     }
 
-    if (state.stalledPreviewChecks >= CONFIG.previewStallThreshold) {
+    const threshold = getCaptureSetting("previewStallThreshold", 4);
+    if (state.stalledPreviewChecks >= threshold) {
       state.stalledPreviewChecks = 0;
+      state.lastHealthyPreviewAt = now;
+      const maxAttempts = getCaptureSetting("previewRecoveryMaxAttempts", 2);
+      state.previewRecoveryAttempts = (state.previewRecoveryAttempts || 0) + 1;
+      if (state.previewRecoveryAttempts > maxAttempts) {
+        stopPreviewWatchdog();
+        stopScanning(true);
+        setStatus("Camera preview unavailable. Tap to retry.", "Camera unavailable");
+        if (state.els?.captureRetryBtn) {
+          state.els.captureRetryBtn.hidden = false;
+        }
+        return;
+      }
       recoverPreviewFromFreeze().catch(() => {
         // Ignore watchdog recovery noise.
       });
     }
-  }, CONFIG.previewWatchIntervalMs);
+  }, getCaptureSetting("previewWatchIntervalMs", 1500));
 }
 
 
@@ -301,6 +333,10 @@ async function stopTracks() {
   stopScanning(true);
   stopPreviewWatchdog();
   clearFocusRefreshTimers();
+  state.previewRecoveryAttempts = 0;
+  state.stalledPreviewChecks = 0;
+  state.lastHealthyPreviewAt = 0;
+  frameFocusDistances.length = 0;
   state.isCameraRunning = false;
   state.torchOn = false;
   updateTorchUi(false, false);
@@ -494,6 +530,8 @@ async function handleDetectedCode(detectedText) {
   }
   updateQuantityPadAvailability();
   playCaptureSound();
+  const confirmedDistance = getFocusDistanceForFrame(state.lastScanFrame?.timestamp);
+  latchFocusDistance(state.track, confirmedDistance).catch(() => {});
   stopScanning(true);
   if (state.isQuantityEntryUnlocked) {
     openQuantityCapture(code);
@@ -521,7 +559,10 @@ function getSquareCropSize(video) {
 
 
 function getDetectionCropModes() {
-  return ["expanded", "visible", "visible", "visible"];
+  // Spend most fresh frames on the aim window, with one wider pass that can
+  // recover quiet zones clipped by the reticle. Every result still passes the
+  // all-corners reticle gate before it can count as a read.
+  return ["reticle", "reticleDetail", "reticle", "expanded"];
 }
 
 
@@ -562,6 +603,155 @@ function getCoverSourceRect(videoWidth, videoHeight, containerWidth, containerHe
 }
 
 
+function getCaptureSetting(name, fallback) {
+  return typeof CONFIG !== "undefined" && CONFIG && Number.isFinite(CONFIG[name]) ? CONFIG[name] : fallback;
+}
+
+
+// Fixed 240 x 130 dp reticle matching the APK capture architecture.
+// Real DOM bounds take precedence, with a 240 x 130 dp centered fallback.
+function getReticleCssRect() {
+  const frame = state.els?.previewFrame;
+  if (!frame) return null;
+  const frameBox = typeof frame.getBoundingClientRect === "function" ? frame.getBoundingClientRect() : null;
+  const frameWidth = Number(frame.clientWidth || frameBox?.width || 0);
+  const frameHeight = Number(frame.clientHeight || frameBox?.height || 0);
+  if (!(frameWidth > 0 && frameHeight > 0)) return null;
+
+  const reticle = state.els?.scanReticle;
+  let left = 0, top = 0, width = 0, height = 0;
+  if (reticle && typeof reticle.getBoundingClientRect === "function" && frameBox) {
+    const box = reticle.getBoundingClientRect();
+    if (box.width > 0 && box.height > 0) {
+      left = box.left - frameBox.left;
+      top = box.top - frameBox.top;
+      width = box.width;
+      height = box.height;
+    }
+  } else if (reticle && Number(reticle.offsetWidth) > 0 && Number(reticle.offsetHeight) > 0) {
+    left = Number(reticle.offsetLeft) || 0;
+    top = Number(reticle.offsetTop) || 0;
+    width = Number(reticle.offsetWidth);
+    height = Number(reticle.offsetHeight);
+  }
+
+  if (!(width > 0 && height > 0)) {
+    const targetWidth = getCaptureSetting("reticleTargetWidth", 240);
+    const targetHeight = getCaptureSetting("reticleTargetHeight", 130);
+    width = Math.min(frameWidth, targetWidth);
+    height = Math.min(frameHeight, targetHeight);
+    left = (frameWidth - width) / 2;
+    top = (frameHeight - height) / 2;
+  }
+
+  width = Math.min(frameWidth, Math.max(1, width));
+  height = Math.min(frameHeight, Math.max(1, height));
+  left = Math.max(0, Math.min(frameWidth - width, left));
+  top = Math.max(0, Math.min(frameHeight - height, top));
+  return { left, top, width, height, frameWidth, frameHeight };
+}
+
+
+function getReticleSourceRect() {
+  const video = state.els?.cameraPreview;
+  const videoWidth = Number(video?.videoWidth || 0);
+  const videoHeight = Number(video?.videoHeight || 0);
+  if (!(videoWidth > 0 && videoHeight > 0)) return null;
+
+  const css = getReticleCssRect();
+  if (!css) {
+    const targetWidth = getCaptureSetting("reticleTargetWidth", 240);
+    const targetHeight = getCaptureSetting("reticleTargetHeight", 130);
+    const width = Math.min(videoWidth, targetWidth);
+    const height = Math.min(videoHeight, targetHeight);
+    return { x: (videoWidth - width) / 2, y: (videoHeight - height) / 2, width, height };
+  }
+
+  const cover = getCoverSourceRect(videoWidth, videoHeight, css.frameWidth, css.frameHeight);
+  const scaleX = cover.visibleWidth / css.frameWidth;
+  const scaleY = cover.visibleHeight / css.frameHeight;
+  let x = cover.offsetX + css.left * scaleX;
+  let y = cover.offsetY + css.top * scaleY;
+  let width = css.width * scaleX;
+  let height = css.height * scaleY;
+  x = Math.max(0, Math.min(videoWidth - 1, x));
+  y = Math.max(0, Math.min(videoHeight - 1, y));
+  width = Math.max(1, Math.min(videoWidth - x, width));
+  height = Math.max(1, Math.min(videoHeight - y, height));
+  return { x, y, width, height };
+}
+
+
+function mapWorkerRegionToSource(region, frame) {
+  if (!region || !frame) return null;
+  const values = [region.x, region.y, region.width, region.height,
+    frame.sx, frame.sy, frame.sw, frame.sh, frame.outputWidth, frame.outputHeight];
+  if (!values.every(Number.isFinite) || frame.outputWidth <= 0 || frame.outputHeight <= 0) return null;
+  return {
+    x: frame.sx + region.x * frame.sw / frame.outputWidth,
+    y: frame.sy + region.y * frame.sh / frame.outputHeight,
+    width: region.width * frame.sw / frame.outputWidth,
+    height: region.height * frame.sh / frame.outputHeight
+  };
+}
+
+
+function mapWorkerPointToSource(point, frame) {
+  if (!point || !frame || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+  return {
+    x: frame.sx + point.x * frame.sw / frame.outputWidth,
+    y: frame.sy + point.y * frame.sh / frame.outputHeight
+  };
+}
+
+
+function pointInsideRect(point, rect, epsilon = 0.5) {
+  return Boolean(point && rect) &&
+    point.x >= rect.x - epsilon && point.x <= rect.x + rect.width + epsilon &&
+    point.y >= rect.y - epsilon && point.y <= rect.y + rect.height + epsilon;
+}
+
+
+// All decoded barcode corners must be inside the visible reticle. A decoded
+// bounding region is accepted only when corner metadata is unavailable.
+// Requires non-degenerate span (maxX > minX && maxY > minY).
+function evaluateReticleGate(resultInfo) {
+  const reticle = getReticleSourceRect();
+  if (!reticle || !(reticle.width > 0) || !(reticle.height > 0)) {
+    return { accepted: false, reason: "reticle-unavailable" };
+  }
+  const corners = Array.isArray(resultInfo?.corners) && resultInfo.corners.length >= 4
+    ? resultInfo.corners.slice(0, 4) : null;
+  if (corners?.every((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y))) {
+    const minX = Math.min(...corners.map(p => p.x));
+    const maxX = Math.max(...corners.map(p => p.x));
+    const minY = Math.min(...corners.map(p => p.y));
+    const maxY = Math.max(...corners.map(p => p.y));
+    if (!(maxX > minX && maxY > minY)) {
+      return { accepted: false, reason: "degenerate-span", reticle };
+    }
+    const allInside = corners.every((point) => pointInsideRect(point, reticle));
+    return { accepted: allInside,
+      reason: allInside ? "corners-inside" : "corners-outside",
+      reticle };
+  }
+  const region = resultInfo?.region;
+  if (region && Number.isFinite(region.x) && Number.isFinite(region.y) &&
+      Number.isFinite(region.width) && Number.isFinite(region.height) &&
+      region.width > 0 && region.height > 0) {
+    const boxCorners = [
+      { x: region.x, y: region.y },
+      { x: region.x + region.width, y: region.y },
+      { x: region.x + region.width, y: region.y + region.height },
+      { x: region.x, y: region.y + region.height }
+    ];
+    const allInside = boxCorners.every((point) => pointInsideRect(point, reticle));
+    return { accepted: allInside, reason: allInside ? "region-inside" : "region-outside", reticle };
+  }
+  return { accepted: false, reason: "no-corners", reticle };
+}
+
+
 function getDetectionFrameGeometry(mode, maxOutputSize = 1920) {
   const video = state.els.cameraPreview;
   const videoWidth = video.videoWidth || (state.isMobileUi ? CONFIG.mobilePreferredSquareSize : CONFIG.preferredSquareSize);
@@ -590,6 +780,19 @@ function getDetectionFrameGeometry(mode, maxOutputSize = 1920) {
     sh = Math.min(videoHeight, Math.max(420, videoHeight * 0.36));
     sx = Math.max(0, Math.min(videoWidth - sw, point.x * videoWidth - sw / 2));
     sy = Math.max(0, Math.min(videoHeight - sh, point.y * videoHeight - sh / 2));
+  } else if (mode === "reticle" || mode === "reticleDetail") {
+    // Analyze the operator's actual aim window first, at sensor resolution.
+    // Wider fallback passes still run so a clipped quiet zone can be recovered;
+    // the final gate above keeps the accepted barcode inside this same window.
+    const reticle = getReticleSourceRect();
+    if (reticle) {
+      sx = reticle.x; sy = reticle.y; sw = reticle.width; sh = reticle.height;
+    } else {
+      sw = videoWidth * getCaptureSetting("reticleWidthRatio", 0.84);
+      sh = videoHeight * getCaptureSetting("reticleHeightRatio", 0.32);
+      sx = (videoWidth - sw) / 2;
+      sy = (videoHeight - sh) / 2;
+    }
   } else if (mode === "expanded" || mode === "detail" || mode === "visible") {
     const container = state.els.previewFrame;
     const cover = getCoverSourceRect(videoWidth, videoHeight,
@@ -632,12 +835,25 @@ function getDetectionFrameGeometry(mode, maxOutputSize = 1920) {
   sy = Math.max(0, Math.min(videoHeight - 1, Math.round(sy)));
   sw = Math.max(1, Math.min(videoWidth - sx, Math.round(sw)));
   sh = Math.max(1, Math.min(videoHeight - sy, Math.round(sh)));
-  const scale = Math.min(mode === "detail" ? 2 : 1, maxOutputSize / Math.max(sw, sh));
+  let scale;
+  if (mode === "reticle" || mode === "reticleDetail") {
+    const maxWidth = getCaptureSetting("reticleAnalysisMaxWidth", 1280);
+    const maxHeight = getCaptureSetting("reticleAnalysisMaxHeight", 720);
+    const maxPixels = getCaptureSetting("reticleAnalysisMaxPixels", 921600);
+    const limit = Math.min(1, maxWidth / sw, maxHeight / sh, Math.sqrt(maxPixels / (sw * sh)));
+    scale = limit;
+    if (mode === "reticleDetail" && limit >= 1) {
+      scale = Math.min(getCaptureSetting("reticleDetailMaxScale", 2),
+        maxWidth / sw, maxHeight / sh, Math.sqrt(maxPixels / (sw * sh)));
+    }
+  } else {
+    scale = Math.min(mode === "detail" ? 2 : 1, maxOutputSize / Math.max(sw, sh));
+  }
   const outputWidth = Math.max(1, Math.round(sw * scale));
   const outputHeight = Math.max(1, Math.round(sh * scale));
 
   return { sx, sy, sw, sh, outputWidth, outputHeight, videoWidth, videoHeight,
-    imageSmoothingEnabled: mode === "detail" };
+    imageSmoothingEnabled: mode === "detail" || mode === "reticleDetail" };
 }
 
 
@@ -712,7 +928,11 @@ async function detectBarcodeInFrame(frameTiming = {}) {
   const focusRevision = state.focusTargetRevision || 0;
   const detector = await createDetector();
   const attempt = state.detectionAttempt || 0;
-  if (state.pendingConfirmCode && performance.now() - state.pendingConfirmAt > 1200) resetBarcodeConfirmation();
+  state.lastReadResult = null;
+  if (state.pendingConfirmCode &&
+      performance.now() - state.pendingConfirmAt > getCaptureSetting("confirmationWindowMs", 1000)) {
+    resetBarcodeConfirmation();
+  }
   // Keep the successful crop for confirmation on the next fresh camera frame.
   const confirming = Boolean(state.pendingConfirmCode && state.lastDetectionPass);
   // A tight crop can occasionally yield a different checksum-valid retail
@@ -759,7 +979,7 @@ async function detectBarcodeInFrame(frameTiming = {}) {
   } catch (error) { captureDiagnostics.error("diagnostics.imageSample", error, diagnostic); }
   const diagnosticsMs = performance.now() - diagnosticsStarted;
   const decodeStarted = performance.now();
-  let worker = null, text = "";
+  let worker = null, text = "", resultInfo = null, workerRegion = null, acceptedInfo = null;
   try {
     text = await detector.detect(videoFrame ? { videoFrame, geometry: frameGeometry, sampleQuality } : image,
     CONFIG.detectorFormats.map((format) => ZXING_FORMAT_MAP[format]).filter(Boolean),
@@ -768,6 +988,14 @@ async function detectBarcodeInFrame(frameTiming = {}) {
       focused: pass.focused, budgetMs: confirming ? 300 : pass.budgetMs, binarizer: pass.binarizer,
       regionOffset: pass.regionOffset,
       onDiagnostics: (details) => { worker = details; quality ||= details?.framePreparation?.quality; },
+      onResult: (details) => {
+        if (session !== state.scanSession || focusRevision !== (state.focusTargetRevision || 0)) return;
+        const corners = Array.isArray(details?.corners)
+          ? details.corners.map((point) => mapWorkerPointToSource(point, frameGeometry)).filter(Boolean) : null;
+        resultInfo = { format: String(details?.format || ""),
+          corners: corners?.length === 4 ? corners : null,
+          region: mapWorkerRegionToSource(details?.region, frameGeometry) };
+      },
       preferredRegion: confirming && !confirmRetailFromFullFrame && state.lastBarcodeRegion ? {
         x: (state.lastBarcodeRegion.x - frameGeometry.sx) * frameGeometry.outputWidth / frameGeometry.sw,
         y: (state.lastBarcodeRegion.y - frameGeometry.sy) * frameGeometry.outputHeight / frameGeometry.sh,
@@ -786,14 +1014,38 @@ async function detectBarcodeInFrame(frameTiming = {}) {
       },
       onRegion: (region) => {
         if (session !== state.scanSession || focusRevision !== (state.focusTargetRevision || 0)) return;
-        state.lastBarcodeRegion = {
-          x: frameGeometry.sx + region.x * frameGeometry.sw / frameGeometry.outputWidth,
-          y: frameGeometry.sy + region.y * frameGeometry.sh / frameGeometry.outputHeight,
-          width: region.width * frameGeometry.sw / frameGeometry.outputWidth,
-          height: region.height * frameGeometry.sh / frameGeometry.outputHeight
-        };
+        const mapped = mapWorkerRegionToSource(region, frameGeometry);
+        if (!mapped) return;
+        const progressGate = evaluateReticleGate({ region: mapped });
+        if (!progressGate.accepted) {
+          captureDiagnostics.event("barcode.reticleProgressRejected", { reason: progressGate.reason }, diagnostic);
+          return;
+        }
+        workerRegion = mapped;
+        state.lastBarcodeRegion = mapped;
         updateBarcodeTracking(region, frameGeometry, session);
       } });
+    if (text) {
+      const format = resultInfo?.format || "";
+      if (format && MATRIX_FORMATS.has(format)) {
+        text = "";
+      }
+    }
+    if (text) {
+      // The worker returns decoded corners in the analyzed crop's coordinates.
+      // Require every corner to fit inside the visible aim window.
+      const info = resultInfo || (workerRegion ? { format: "", corners: null, region: workerRegion } : null);
+      const gate = evaluateReticleGate(info);
+      if (!gate.accepted) {
+        state.lastDetectionRejection = { reason: gate.reason, at: performance.now() };
+        captureDiagnostics.event("barcode.reticleRejected", { reason: gate.reason, cropMode }, diagnostic);
+        text = "";
+      } else {
+        acceptedInfo = { format: info?.format || "", corners: info?.corners || null,
+          region: info?.region || workerRegion || null };
+        state.lastDetectionRejection = null;
+      }
+    }
   } catch (error) {
     if (!videoFrame || !["FramePreparationError", "FrameTransferError"].includes(error.name)) throw error;
     // Unsupported frame transfer/copy is a recoverable capability fallback.
@@ -813,6 +1065,8 @@ async function detectBarcodeInFrame(frameTiming = {}) {
   if (session === state.scanSession) {
     state.detectionAttempt = attempt + 1;
     state.lastDetectionPass = text ? pass : confirming ? state.lastDetectionPass : null;
+    state.lastReadResult = text && acceptedInfo ? { text, ...acceptedInfo } : null;
+    if (text) rememberFocusDistance(state.track);
   }
   return text;
 }
@@ -852,11 +1106,17 @@ function readVideoFrameSample(video, metadata) {
   if (decodedFrames === null && Number.isFinite(video.webkitDecodedFrameCount) && video.webkitDecodedFrameCount > 0) {
     decodedFrames = video.webkitDecodedFrameCount;
   }
+  const sampleTime = performance.now();
+  const trackDist = Number(state.track?.getSettings?.().focusDistance);
+  if (Number.isFinite(trackDist)) {
+    recordFrameFocusDistance(sampleTime, trackDist);
+  }
   return {
     presentedFrames: Number.isFinite(metadata?.presentedFrames) && metadata.presentedFrames > 0 ? metadata.presentedFrames : null,
     decodedFrames,
     mediaTime: Number.isFinite(metadata?.mediaTime) && metadata.mediaTime >= 0 ? metadata.mediaTime : null,
-    currentTime: Number.isFinite(video.currentTime) && video.currentTime >= 0 ? video.currentTime : null
+    currentTime: Number.isFinite(video.currentTime) && video.currentTime >= 0 ? video.currentTime : null,
+    timestamp: sampleTime
   };
 }
 
@@ -949,37 +1209,55 @@ function wasRecentlyDetected(detectedText) {
 
 function resetBarcodeConfirmation() {
   state.pendingConfirmCode = "";
+  state.pendingConfirmFormat = "";
   state.pendingConfirmCount = 0;
   state.pendingConfirmAt = 0;
   state.pendingConfirmMisses = 0;
 }
 
-function confirmAcrossFrames(detectedText) {
+function confirmAcrossFrames(detectedText, detectedFormat = "") {
   const code = String(detectedText || "").trim();
+  const format = String(detectedFormat || "");
   const now = performance.now();
-  if (state.pendingConfirmCode && now - state.pendingConfirmAt > 1200) resetBarcodeConfirmation();
-  if (!code) {
-    if (state.pendingConfirmCode && state.pendingConfirmMisses < 2) {
-      state.pendingConfirmMisses += 1;
-      captureDiagnostics.event("barcode.confirmationRetained", { missedFrames: state.pendingConfirmMisses,
-        ageMs: Math.round(now - state.pendingConfirmAt) });
-      return false;
-    }
+  const windowMs = getCaptureSetting("confirmationWindowMs", 1000);
+  const requiredReads = getCaptureSetting("confirmationRequiredReads", 2);
+  const maxMisses = getCaptureSetting("confirmationMaxMisses", 3);
+  // A miss never extends the window; an expired first read or backwards clock anomaly is discarded.
+  if (state.pendingConfirmCode && (now < state.pendingConfirmAt || now - state.pendingConfirmAt > windowMs)) {
     resetBarcodeConfirmation();
+  }
+  if (!code) {
+    if (state.pendingConfirmCode) {
+      state.pendingConfirmMisses = (state.pendingConfirmMisses || 0) + 1;
+      if (maxMisses > 0 && state.pendingConfirmMisses >= maxMisses) {
+        resetBarcodeConfirmation();
+      } else {
+        captureDiagnostics.event("barcode.confirmationRetained", { missedFrames: state.pendingConfirmMisses,
+          ageMs: Math.round(now - state.pendingConfirmAt) });
+      }
+    }
     return false;
   }
 
-  if (state.pendingConfirmCode === code) {
+  if (state.pendingConfirmCode === code && String(state.pendingConfirmFormat || "") === format) {
     state.pendingConfirmCount += 1;
   } else {
-    if (state.pendingConfirmCode) captureDiagnostics.event("barcode.confirmationChanged");
+    if (state.pendingConfirmCode) {
+      captureDiagnostics.event("barcode.confirmationChanged", {
+        valueChanged: state.pendingConfirmCode !== code,
+        formatChanged: String(state.pendingConfirmFormat || "") !== format
+      });
+    }
+    // A different value or symbology replaces the candidate and starts a new
+    // window; it cannot combine with the previous read.
     state.pendingConfirmCode = code;
+    state.pendingConfirmFormat = format;
     state.pendingConfirmCount = 1;
     state.pendingConfirmAt = now;
   }
   state.pendingConfirmMisses = 0;
 
-  if (state.pendingConfirmCount >= 2) {
+  if (state.pendingConfirmCount >= requiredReads) {
     resetBarcodeConfirmation();
     return true;
   }
@@ -1031,13 +1309,17 @@ async function captureAttempt(session) {
     if (focus?.mode === "single-shot" && !focus.manualPoint && Date.now() - focus.updatedAt >= 2000) {
       requestFocusRefresh(state.track, { force: true }).catch(() => {});
     }
-    // Keep scanning fresh 1080p frames with the next crop/detail pass.
-    setStatus(state.pendingConfirmCode ? "Confirming code…" : "Scanning barcode…");
+    // Keep scanning fresh frames with the next reticle/detail pass.
+    const rejection = state.lastDetectionRejection;
+    const recentlyRejected = rejection && performance.now() - rejection.at < 300 &&
+      rejection.reason !== "reticle-unavailable";
+    setStatus(recentlyRejected ? "Fit barcode inside frame" :
+      state.pendingConfirmCode ? "Confirming code…" : "Scanning barcode…");
     return false;
   }
 
   captureDiagnostics.candidate(detectedText);
-  if (!confirmAcrossFrames(detectedText)) {
+  if (!confirmAcrossFrames(detectedText, state.lastReadResult?.format || "")) {
     setStatus("Confirming code…");
     return false;
   }
@@ -1236,23 +1518,227 @@ function assistSmallBarcode(region, frame, session) {
 }
 
 
+function createCameraFocusState() {
+  return {
+    mode: "", pending: null, updatedAt: 0, lastForcedAt: -Infinity,
+    pointRejected: false, singleShotUnavailable: false, manualRequest: 0,
+    manualPoint: false, point: null, scanPoint: null,
+    // Remember the last lens distance that produced a sharp frame. It is
+    // reused briefly on the next capture before continuous AF is restored.
+    distanceMemory: null, holdActive: false, holdMemory: 0, holdTimer: 0, holdStartedAt: 0
+  };
+}
+
+
+function getCameraFocusState(track) {
+  let focus = cameraFocusStates.get(track);
+  if (!focus) {
+    focus = createCameraFocusState();
+    cameraFocusStates.set(track, focus);
+  }
+  return focus;
+}
+
+
+function rememberFocusDistance(track) {
+  if (!track || track !== state.track) return false;
+  const focus = cameraFocusStates.get(track);
+  if (!focus) return false;
+  try {
+    const range = track.getCapabilities?.().focusDistance;
+    const distance = Number(track.getSettings?.().focusDistance);
+    if (!range || !Number.isFinite(range.min) || !Number.isFinite(range.max) || range.max <= range.min ||
+        !Number.isFinite(distance) || distance < range.min || distance > range.max) return false;
+    focus.distanceMemory = { distance, min: range.min, max: range.max,
+      step: Number(range.step) > 0 ? Number(range.step) : 0, rememberedAt: Date.now() };
+    captureDiagnostics.event("focus.distanceRemembered", {
+      distance: Math.round(distance * 1000) / 1000 }, captureDiagnostics.current);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+
+function canDeviceSupportManualFocus(track) {
+  if (!track || track !== state.track) return false;
+  try {
+    const capabilities = track.getCapabilities?.() || {};
+    const range = capabilities.focusDistance;
+    return (capabilities.focusMode || []).includes("manual") && range &&
+      Number.isFinite(range.min) && Number.isFinite(range.max) && range.max > range.min;
+  } catch (_) {
+    return false;
+  }
+}
+
+
+function canUseFocusDistanceMemory(track) {
+  if (!canDeviceSupportManualFocus(track)) return false;
+  const memory = cameraFocusStates.get(track)?.distanceMemory;
+  if (!memory || !Number.isFinite(memory.distance)) return false;
+  const range = track.getCapabilities?.().focusDistance;
+  return memory.distance >= range.min && memory.distance <= range.max;
+}
+
+
+function clampFocusDistance(distance, range) {
+  const step = Number(range.step) > 0 ? Number(range.step) : 0;
+  const value = step
+    ? range.min + Math.round((distance - range.min) / step) * step
+    : distance;
+  return Math.max(range.min, Math.min(range.max, value));
+}
+
+// 90-sample focus distance ring buffer with 100 ms lookup window (matches APK FrameFocusDistances)
+const frameFocusDistances = [];
+function recordFrameFocusDistance(timestamp, distance) {
+  if (!Number.isFinite(distance)) return;
+  const maxSamples = getCaptureSetting("focusSampleBufferMax", 90);
+  frameFocusDistances.push({ timestamp: timestamp || performance.now(), distance });
+  if (frameFocusDistances.length > maxSamples) {
+    frameFocusDistances.shift();
+  }
+}
+
+function getFocusDistanceForFrame(frameTimestamp) {
+  if (!frameFocusDistances.length) return null;
+  const target = Number.isFinite(frameTimestamp) ? frameTimestamp : performance.now();
+  const matchWindow = getCaptureSetting("focusMatchWindowMs", 100);
+  let nearestEarlier = null;
+  let minDiff = Infinity;
+  for (let i = frameFocusDistances.length - 1; i >= 0; i--) {
+    const sample = frameFocusDistances[i];
+    const diff = target - sample.timestamp;
+    if (diff >= 0 && diff <= matchWindow) {
+      if (diff < minDiff) {
+        minDiff = diff;
+        nearestEarlier = sample.distance;
+      }
+    }
+  }
+  return nearestEarlier;
+}
+
+// Capture latch: holds lens at the confirmed focus distance (matches APK ScanFocusMemory)
+async function latchFocusDistance(track, distance) {
+  if (!track || track !== state.track || !canDeviceSupportManualFocus(track)) return false;
+  const focus = getCameraFocusState(track);
+  if (focus.manualPoint) return false;
+  const range = track.getCapabilities?.().focusDistance;
+  if (!range) return false;
+  const targetDistance = Number.isFinite(distance) ? distance : Number(track.getSettings?.().focusDistance);
+  if (!Number.isFinite(targetDistance) || targetDistance < range.min || targetDistance > range.max) return false;
+  const clamped = clampFocusDistance(targetDistance, range);
+  const tolerance = getCaptureSetting("focusDistanceTolerance", 0.01);
+  if (focus.holdActive && Number.isFinite(focus.holdMemory) && Math.abs(focus.holdMemory - clamped) <= tolerance + 1e-5) {
+    return true;
+  }
+  focus.distanceMemory = { distance: clamped, min: range.min, max: range.max,
+    step: Number(range.step) > 0 ? Number(range.step) : 0, rememberedAt: Date.now() };
+  try {
+    const applied = await applyCameraTrackConstraints(track,
+      { focusMode: "manual", focusDistance: clamped }, state.scanSession);
+    if (applied) {
+      focus.mode = "manual";
+      focus.holdActive = true;
+      focus.holdMemory = clamped;
+      focus.holdStartedAt = Date.now();
+      captureDiagnostics.event("focus.distanceLatched", { distance: clamped }, captureDiagnostics.current);
+      return true;
+    }
+  } catch (_) {}
+  return false;
+}
+
+// Apply the remembered distance before the decoder finishes loading. The
+// 700 ms reuse window does not start until the decoder is ready.
+async function prepareFocusDistanceHold(track, session) {
+  if (!state.capturePageOpen || !isCurrentCameraTrack(track) ||
+      !canUseFocusDistanceMemory(track) || !track.applyConstraints) return false;
+  const diagnostic = captureDiagnostics.current;
+  const focus = getCameraFocusState(track);
+  if (focus.manualPoint) return false;
+  while (focus.pending) {
+    await focus.pending.catch(() => {});
+    if (session !== state.scanSession || !isCurrentCameraTrack(track) || focus.manualPoint ||
+        !canUseFocusDistanceMemory(track)) return false;
+  }
+  const memory = focus.distanceMemory;
+  const range = track.getCapabilities?.().focusDistance;
+  if (!memory || !range) return false;
+  const distance = clampFocusDistance(memory.distance, range);
+  const tolerance = getCaptureSetting("focusDistanceTolerance", 0.01);
+  if (focus.holdActive && Number.isFinite(focus.holdMemory) && Math.abs(focus.holdMemory - distance) <= tolerance + 1e-5) {
+    return true;
+  }
+  focus.pending = (async function () {
+    try {
+      const applied = await applyCameraTrackConstraints(track,
+        { focusMode: "manual", focusDistance: distance }, session);
+      if (!applied || session !== state.scanSession || !isCurrentCameraTrack(track)) return false;
+      focus.mode = "manual";
+      focus.holdActive = true;
+      focus.holdMemory = distance;
+      focus.holdStartedAt = 0;
+      focus.updatedAt = Date.now();
+      captureDiagnostics.event("focus.memoryHoldPrepared", {
+        distance, memoryAgeMs: Date.now() - memory.rememberedAt }, diagnostic);
+      return true;
+    } catch (error) {
+      captureDiagnostics.error("focus.memoryHold", error, diagnostic);
+      return false;
+    }
+  }()).finally(function () { focus.pending = null; });
+  return focus.pending;
+}
+
+
+function finishFocusDistanceHold(track, session) {
+  const focus = cameraFocusStates.get(track);
+  if (!focus?.holdActive || session !== state.scanSession || !isCurrentCameraTrack(track)) return false;
+  focus.holdStartedAt = Date.now();
+  const windowMs = getCaptureSetting("focusMemoryWindowMs", 700);
+  const timer = window.setTimeout(function () {
+    if (session !== state.scanSession || !isCurrentCameraTrack(track) || !focus.holdActive) return;
+    focus.holdActive = false;
+    focus.holdTimer = 0;
+    captureDiagnostics.event("focus.memoryHoldExpired", {
+      heldMs: Math.round(Date.now() - focus.holdStartedAt) }, captureDiagnostics.current);
+    requestFocusRefresh(track, { force: true, newScan: true, session }).catch(function () {});
+  }, windowMs);
+  focus.holdTimer = timer;
+  if (!Array.isArray(state.focusRefreshTimers)) state.focusRefreshTimers = [];
+  state.focusRefreshTimers.push(timer);
+  captureDiagnostics.event("focus.memoryHoldStarted", {
+    windowMs, distance: focus.holdMemory }, captureDiagnostics.current);
+  return true;
+}
+
+
 async function requestFocusRefresh(track, options = {}) {
   const diagnostic = captureDiagnostics.current;
   const focusStarted = performance.now();
   captureDiagnostics.event("focus.request", { manual: Boolean(options.manual), point: options.point,
     newScan: Boolean(options.newScan), forced: Boolean(options.force) }, diagnostic);
   if (!state.capturePageOpen || !isCurrentCameraTrack(track) || !track.getCapabilities || !track.applyConstraints) return false;
-  let focus = cameraFocusStates.get(track);
-  if (!focus) {
-    focus = { mode: "", pending: null, updatedAt: 0, lastForcedAt: -Infinity,
-      pointRejected: false, singleShotUnavailable: false, manualRequest: 0, manualPoint: false, point: null, scanPoint: null };
-    cameraFocusStates.set(track, focus);
-  }
+  const focus = getCameraFocusState(track);
   const session = options.session ?? state.scanSession;
+  if (!options.manual && focus.holdActive && session === state.scanSession) {
+    captureDiagnostics.event("focus.skipped", { reason: "distance-memory" }, diagnostic);
+    return false;
+  }
   const manualRequest = options.manual ? ++focus.manualRequest : focus.manualRequest;
   if (options.manual) {
     // A user's selected target remains authoritative for this capture. Do not
     // let decoder candidates change it again a few seconds after the tap.
+    if (focus.holdActive) {
+      focus.holdActive = false;
+      if (focus.holdTimer) window.clearTimeout(focus.holdTimer);
+      focus.holdTimer = 0;
+    }
+    // A tap can point at a new distance; do not reuse the old lens position.
+    focus.distanceMemory = null;
     focus.manualPoint = true;
     if (options.point) focus.scanPoint = { x: options.point.x, y: options.point.y };
     state.focusTargetRevision = (state.focusTargetRevision || 0) + 1;
@@ -1385,6 +1871,8 @@ async function requestFocusRefresh(track, options = {}) {
           const observed = track.getSettings?.() || {};
           captureDiagnostics.event("focus.observed", { afterMs: delay, focusMode: observed.focusMode,
             focusDistance: observed.focusDistance, pointsOfInterest: observed.pointsOfInterest }, diagnostic);
+          // Keep the distance reported by settled autofocus for the next scan.
+          if (observed.focusMode !== "manual") rememberFocusDistance(track);
         }, delay));
       }
       if (options.manual && manualRequest === focus.manualRequest) {
@@ -1665,9 +2153,14 @@ async function startScanning() {
   if (!state.capturePageOpen || generation !== state.captureGeneration || document.hidden || state.isScanning) return;
 
   const session = ++state.scanSession;
-  // Start lens control as soon as playback is ready, even if the decoder is
-  // still loading. Previously this could leave the preview blurry for seconds.
-  scheduleFocusRefresh(state.track, { newScan: true, session });
+  // If focus memory is available, reuse the last confirmed focus distance
+  let holdPrepared = false;
+  if (canUseFocusDistanceMemory(state.track)) {
+    holdPrepared = await prepareFocusDistanceHold(state.track, session);
+  }
+  if (!holdPrepared) {
+    scheduleFocusRefresh(state.track, { newScan: true, session });
+  }
   setStatus("Loading scanner…");
   try {
     const error = await detectorReady;
@@ -1677,6 +2170,12 @@ async function startScanning() {
     throw error;
   }
   if (!state.capturePageOpen || generation !== state.captureGeneration || session !== state.scanSession) return;
+
+  if (cameraFocusStates.get(state.track)?.holdActive) {
+    finishFocusDistanceHold(state.track, session);
+  } else {
+    scheduleFocusRefresh(state.track, { newScan: true, session });
+  }
 
   resetBarcodeTracking();
   state.lastBarcodeRegion = null;
@@ -1702,6 +2201,11 @@ function stopScanning(keepStatusMessage) {
   state.lastBarcodeRegion = null;
   cleanupScanTimer();
   state.isScanning = false;
+  const focus = cameraFocusStates.get(state.track);
+  if (focus?.holdTimer) {
+    window.clearTimeout(focus.holdTimer);
+    focus.holdTimer = 0;
+  }
   resetBarcodeConfirmation();
   updateScanButton();
   updateModePill();
