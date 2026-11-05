@@ -869,6 +869,7 @@ async function detectBarcodeInFrame(frameTiming = {}) {
         width: state.lastBarcodeRegion.width * frameGeometry.outputWidth / frameGeometry.sw,
         height: state.lastBarcodeRegion.height * frameGeometry.outputHeight / frameGeometry.sh
       } : null,
+      verificationCode: confirmRetailFromFullFrame ? state.pendingConfirmCode : "",
       onFocus: (region) => {
         captureDiagnostics.event("barcode.candidateRegion", { region }, diagnostic);
         assistSmallBarcode(region, frameGeometry, session);

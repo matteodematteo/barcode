@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=171");
+importScripts("capture-frame-worker.js?v=172");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -522,9 +522,142 @@ async function readBarcodeStrip(pixels, rect, options, deadline) {
   return results.some(isAcceptedBarcode) ? offsetBarcodePositions(results, rect) : [];
 }
 
+const EAN13_L = ["0001101", "0011001", "0010011", "0111101", "0100011",
+  "0110001", "0101111", "0111011", "0110111", "0001011"];
+const EAN13_G = ["0100111", "0110011", "0011011", "0100001", "0011101",
+  "0111001", "0000101", "0010001", "0001001", "0010111"];
+const EAN13_R = EAN13_L.map((pattern) => [...pattern].map((bit) => bit === "0" ? "1" : "0").join(""));
+const EAN13_PARITY = ["LLLLLL", "LLGLGG", "LLGGLG", "LLGGGL", "LGLLGG",
+  "LGGLLG", "LGGGLL", "LGLGLG", "LGLGGL", "LGGLGL"];
+
+function closestEanDigit(bits, patterns) {
+  let bestDigit = -1, bestDistance = 8, tied = false;
+  for (let digit = 0; digit < patterns.length; digit++) {
+    let distance = 0;
+    for (let i = 0; i < 7; i++) if (bits[i] !== patterns[digit][i]) distance++;
+    if (distance < bestDistance) { bestDigit = digit; bestDistance = distance; tied = false; }
+    else if (distance === bestDistance) tied = true;
+  }
+  return tied || bestDistance > 1 ? null : { digit: bestDigit, distance: bestDistance };
+}
+
+function decodeEan13Modules(bits) {
+  if (bits.length < 95 || bits.slice(0, 3).join("") !== "101" ||
+      bits.slice(45, 50).join("") !== "01010" || bits.slice(92, 95).join("") !== "101") return null;
+  const left = [], parity = [];
+  let distance = 0;
+  for (let i = 0; i < 6; i++) {
+    const pattern = bits.slice(3 + i * 7, 10 + i * 7).join("");
+    const l = closestEanDigit(pattern, EAN13_L), g = closestEanDigit(pattern, EAN13_G);
+    if (!l && !g) return null;
+    if (g && (!l || g.distance < l.distance)) { left.push(g.digit); parity.push("G"); distance += g.distance; }
+    else { left.push(l.digit); parity.push("L"); distance += l.distance; }
+  }
+  const first = EAN13_PARITY.indexOf(parity.join(""));
+  if (first < 0) return null;
+  const right = [];
+  for (let i = 0; i < 6; i++) {
+    const decoded = closestEanDigit(bits.slice(50 + i * 7, 57 + i * 7).join(""), EAN13_R);
+    if (!decoded) return null;
+    right.push(decoded.digit); distance += decoded.distance;
+  }
+  const text = String(first) + left.join("") + right.join("");
+  let checksum = 0;
+  for (let i = 0; i < 12; i++) checksum += Number(text[i]) * (i % 2 ? 3 : 1);
+  if ((10 - checksum % 10) % 10 !== Number(text[12]) || distance > 3) return null;
+  return { text, distance };
+}
+
+// Recover faint EAN-13s directly from the module guards when a photographic
+// image leaves too little contrast for ZXing's general-purpose binarizers.
+// This is restricted to an already isolated label/candidate region; valid
+// checksums and the page's independent-frame confirmation remain mandatory.
+function readEan13Scanlines(pixels, deadline, topRatio = 0.42, bottomRatio = 0.94) {
+  const { width, height, data } = pixels;
+  const yStart = Math.max(0, Math.floor(height * topRatio));
+  const yEnd = Math.min(height, Math.ceil(height * bottomRatio));
+  const votes = new Map();
+  for (let y = yStart; y < yEnd; y += 2) {
+    if (performance.now() >= deadline) break;
+    const values = new Uint8Array(width), histogram = new Uint16Array(256);
+    let darkest = 255, lightest = 0;
+    const row = y * width * 4;
+    for (let x = 0; x < width; x++) {
+      const i = row + x * 4;
+      const value = (data[i] * 77 + data[i + 1] * 150 + data[i + 2] * 29) >> 8;
+      values[x] = value; histogram[value]++;
+      darkest = Math.min(darkest, value); lightest = Math.max(lightest, value);
+    }
+    if (lightest - darkest < 24) continue;
+    let sum = 0;
+    for (let i = 0; i < 256; i++) sum += i * histogram[i];
+    let background = 0, backgroundWeight = 0, bestVariance = -1, otsu = (darkest + lightest) >> 1;
+    for (let i = 0; i < 256; i++) {
+      backgroundWeight += histogram[i];
+      if (!backgroundWeight) continue;
+      const foregroundWeight = width - backgroundWeight;
+      if (!foregroundWeight) break;
+      background += i * histogram[i];
+      const delta = background / backgroundWeight - (sum - background) / foregroundWeight;
+      const variance = backgroundWeight * foregroundWeight * delta * delta;
+      if (variance > bestVariance) { bestVariance = variance; otsu = i; }
+    }
+    const thresholds = [...new Set([otsu,
+      Math.round(darkest + (lightest - darkest) * 0.4),
+      Math.round(darkest + (lightest - darkest) * 0.5),
+      Math.round(darkest + (lightest - darkest) * 0.6)])];
+    for (const threshold of thresholds) {
+      const runs = [];
+      let color = values[0] <= threshold ? 1 : 0, start = 0;
+      for (let x = 1; x <= width; x++) {
+        const next = x < width && values[x] <= threshold ? 1 : 0;
+        if (x === width || next !== color) {
+          runs.push({ start, length: x - start, color });
+          start = x; color = next;
+        }
+      }
+      for (let i = 0; i + 2 < runs.length; i++) {
+        const a = runs[i], b = runs[i + 1], c = runs[i + 2];
+        if (a.color !== 1 || b.color !== 0 || c.color !== 1) continue;
+        const module = (a.length + b.length + c.length) / 3;
+        if (module < 0.8 || Math.max(a.length, b.length, c.length) > module * 1.75 ||
+            Math.min(a.length, b.length, c.length) < module * 0.45) continue;
+        // Three pixels of a guard may be quantized as 3/2/3 even when the
+        // actual module pitch is 2.4px. Search a wider pitch range to absorb
+        // blur, JPEG ringing and subpixel camera scaling.
+        for (const scale of [0.84, 0.9, 0.96, 1.02, 1.08, 1.14]) {
+          const unit = module * scale;
+          if (a.start + 95 * unit > width) continue;
+          const bits = new Array(95);
+          for (let bit = 0; bit < 95; bit++) {
+            const x = Math.max(0, Math.min(width - 1, Math.floor(a.start + (bit + 0.5) * unit)));
+            bits[bit] = values[x] <= threshold ? "1" : "0";
+          }
+          const decoded = decodeEan13Modules(bits);
+          if (!decoded) continue;
+          let vote = votes.get(decoded.text);
+          if (!vote) { vote = { text: decoded.text, distance: decoded.distance, rows: new Set(), x: a.start, unit }; votes.set(decoded.text, vote); }
+          vote.distance = Math.min(vote.distance, decoded.distance);
+          vote.rows.add(y);
+        }
+      }
+    }
+  }
+  const winner = [...votes.values()].sort((a, b) => b.rows.size - a.rows.size || a.distance - b.distance)[0];
+  if (!winner) return [];
+  const top = Math.max(0, Math.min(...winner.rows) - 2);
+  const bottom = Math.min(height - 1, Math.max(...winner.rows) + 2);
+  const x0 = winner.x, x1 = Math.min(width - 1, winner.x + winner.unit * 95);
+  return [{ isValid: true, text: winner.text, format: "EAN-13", ean13EvidenceRows: winner.rows.size,
+    position: { topLeft: { x: x0, y: top }, topRight: { x: x1, y: top },
+      bottomRight: { x: x1, y: bottom }, bottomLeft: { x: x0, y: bottom } } }];
+}
+
 async function readCompactColourLabel(pixels, panel, options, deadline) {
   if (performance.now() >= deadline) return [];
   const crop = cropBarcodePixels(pixels, panel);
+  const directEan = readEan13Scanlines(crop, deadline);
+  if (directEan.some(isAcceptedBarcode)) return offsetBarcodePositions(directEan, panel);
   // Keep the common compact-label reads cheap. The enlarged fallback below
   // still gets the decoder's thorough rotations/inversion when needed.
   const candidateOptions = { ...options, tryHarder: false, tryDownscale: false, minLineCount: 1 };
@@ -551,7 +684,7 @@ async function readCompactColourLabel(pixels, panel, options, deadline) {
     restoreRotatedPositions(results, normalized, enlarged, 0, scale), panel);
 }
 
-async function verifyRetailRegion(pixels, region, options, deadline) {
+async function verifyRetailRegion(pixels, region, options, deadline, expectedText = "") {
   const weakReads = [];
   for (const [marginX, marginY] of [[0.25, 0.35], [0.45, 0.5]]) {
     if (performance.now() >= deadline) break;
@@ -574,7 +707,11 @@ async function verifyRetailRegion(pixels, region, options, deadline) {
     // read only when a second, wider context agrees on this fresh frame.
     const weak = await decodeBarcodePixels(crop, { ...options, minLineCount: 2 },
       { orientation: "auto", thorough: true, enhance: false }, deadline);
-    const accepted = weak.find(isAcceptedBarcode);
+    let accepted = weak.find(isAcceptedBarcode);
+    if ((!accepted || expectedText && accepted.text !== expectedText) && performance.now() < deadline) {
+      accepted = readEan13Scanlines(crop, deadline, 0.12, 0.96)
+        .find(result => isAcceptedBarcode(result) && (!expectedText || result.text === expectedText)) || accepted;
+    }
     weakReads.push(accepted ? { result: accepted, rect } : null);
   }
   if (weakReads.length === 2 && weakReads.every(Boolean) &&
@@ -777,7 +914,7 @@ self.onmessage = async ({ data }) => {
         // before background candidates. Four matching rows reject the thin
         // crop misread found in the supplied EAN-13 label photos.
         if (frameDiagnostics) frameDiagnostics.stage = "retail-verification-region";
-        results = await verifyRetailRegion(pixels, verification, dense, deadline);
+        results = await verifyRetailRegion(pixels, verification, dense, deadline, data.verificationCode || "");
       }
       let globalStrips = [];
       if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
@@ -815,6 +952,12 @@ self.onmessage = async ({ data }) => {
           if (panel.width > pixels.width * 0.7 || panel.width < 72 || panel.height < 28 ||
               panel.width * panel.height > pixels.width * pixels.height * 0.18) continue;
           const crop = cropBarcodePixels(pixels, panel);
+          results = readEan13Scanlines(crop, deadline);
+          if (results.some(isAcceptedBarcode)) {
+            results = offsetBarcodePositions(results, panel);
+            break;
+          }
+          if (performance.now() >= deadline) break;
           results = await readDiagnosticBarcodes(crop, dense);
           if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
             const normalized = normalizeBarcodePixels(crop, 1);
