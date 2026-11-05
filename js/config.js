@@ -26,8 +26,37 @@ const CONFIG = {
     mobileScanIntervalMs: 16,
     iosScanIntervalMs: 16,
     duplicateScanCooldownMs: 600,
-    previewWatchIntervalMs: 3500,
-    previewStallThreshold: 2,
+    // Two fresh reads of the same value and symbology inside this window.
+    // Up to 2 missed frames are tolerated; 3 consecutive misses discard the candidate.
+    confirmationWindowMs: 1000,
+    confirmationRequiredReads: 2,
+    confirmationMaxMisses: 3,
+    // Centered 240 x 130 dp aim window matching the APK capture architecture.
+    // Actual CSS pixels are read from #scanReticle so the decoder gate always
+    // matches what the operator sees.
+    reticleTargetWidth: 240,
+    reticleTargetHeight: 130,
+    reticleWidthRatio: 0.84,
+    reticleHeightRatio: 0.32,
+    // Reticle-first analysis stays close to 720p even on high-resolution sensors.
+    reticleAnalysisMaxWidth: 1280,
+    reticleAnalysisMaxHeight: 720,
+    reticleAnalysisMaxPixels: 921600,
+    reticleDetailMaxScale: 2,
+    // Focus system parity with APK: 700 ms next-scan reuse, 0.01 tolerance lock,
+    // 90-sample focus distance ring buffer, 100 ms frame timestamp match window.
+    focusMemoryWindowMs: 700,
+    focusDistanceTolerance: 0.01,
+    focusMeteringPointSize: 0.15,
+    focusAutoCancelMs: 1500,
+    focusStartupRetryMs: 350,
+    focusSampleBufferMax: 90,
+    focusMatchWindowMs: 100,
+    // Bounded preview-stall recovery: 4 x 1.5 s = 6 s of no new frames.
+    previewWatchIntervalMs: 1500,
+    previewStallThreshold: 4,
+    previewRecoveryMaxAttempts: 2,
+    previewHealthResetMs: 15000,
     preferredSquareSize: 1080,
     mobilePreferredSquareSize: 1080,
     detectorFormats: [

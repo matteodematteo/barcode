@@ -106,7 +106,7 @@ function loadCaptureEngine() {
   captureEnginePromise = new Promise(function (resolve, reject) {
     captureDiagnostics.event("captureBundle.loading");
     const script = document.createElement("script");
-    script.src = "js/capture.bundle.js?v=164";
+    script.src = "js/capture.bundle.js?v=165";
     script.onload = function () {
       captureEngineLoaded = true;
       captureDiagnostics.mark("captureBundle.ready");
@@ -176,8 +176,9 @@ function closeCapturePage(options) {
   if (state.quantityCaptureOpen) closeQuantityCapture();
   state.capturePageOpen = false;
   state.captureGeneration += 1;
-  if (options?.captured && !document.hidden && state.track?.readyState === "live") {
-    // Keep the hardware ready behind the main screen; never decode between taps.
+  if (!document.hidden && state.track?.readyState === "live") {
+    // Keep an already-authorized stream ready behind the main screen. Reusing
+    // it avoids another iOS camera permission round trip between captures.
     stopScanning(true);
     stopPreviewWatchdog();
     clearFocusRefreshTimers();

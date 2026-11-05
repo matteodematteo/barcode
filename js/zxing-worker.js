@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=164");
+importScripts("capture-frame-worker.js?v=165");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -179,8 +179,12 @@ function rotateBarcodePixels(pixels, angle, enlargement = 1) {
   return output;
 }
 
+const MATRIX_FORMATS = new Set(["Aztec", "DataMatrix", "MaxiCode", "PDF417", "QRCode", "MicroQRCode", "rMQRCode"]);
 function isAcceptedBarcode(result) {
   if (!result?.isValid) return false;
+  // Only linear retail/product labels are configured, but reject matrix
+  // symbologies defensively if a decoder build or future caller adds them.
+  if (MATRIX_FORMATS.has(result.format)) return false;
   // ZXing's ITF14 format filter can still return generic ITF fragments.
   // Retail ITF-14 needs all 14 digits and its GS1 check digit.
   if (/^ITF/.test(result.format)) {
@@ -733,6 +737,38 @@ self.onmessage = async ({ data }) => {
         }
       }
       if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+        // Small yellow price labels can have little edge contrast against the
+        // product behind them. Decode compact colour panels before spending
+        // the frame budget ranking unrelated shelf and package stripes.
+        const panels = findColourLabelRegions(pixels);
+        if (frameDiagnostics) frameDiagnostics.stage = "compact-colour-labels";
+        for (const panel of panels) {
+          if (performance.now() >= deadline) break;
+          if (panel.width > pixels.width * 0.7 || panel.width < 72 || panel.height < 28 ||
+              panel.width * panel.height > pixels.width * pixels.height * 0.18) continue;
+          const crop = cropBarcodePixels(pixels, panel);
+          results = await readDiagnosticBarcodes(crop, dense);
+          if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+            const normalized = normalizeBarcodePixels(crop, 1);
+            if (normalized && performance.now() < deadline) {
+              results = await readDiagnosticBarcodes(normalized, dense);
+            }
+          }
+          if (results.some(isAcceptedBarcode)) {
+            results = offsetBarcodePositions(results, panel);
+            break;
+          }
+          if (performance.now() < deadline) {
+            for (const strip of findBarcodeStrips(crop).slice(0, 2)) {
+              const rect = { ...strip, x: strip.x + panel.x, y: strip.y + panel.y };
+              results = await readBarcodeStrip(pixels, rect, dense, deadline);
+              if (results.some(isAcceptedBarcode)) break;
+            }
+            if (results.some(isAcceptedBarcode)) break;
+          }
+        }
+      }
+      if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
         // The full preview remains searchable when the label is off center.
         if (frameDiagnostics) frameDiagnostics.stage = "barcode-strip-priority";
         globalStrips = findBarcodeStrips(pixels);
@@ -880,13 +916,15 @@ self.onmessage = async ({ data }) => {
       results = await decodeBarcodePixels(pixels, options, data, deadline);
     }
     const result = results.find(isAcceptedBarcode);
-    let decodedRegion = null;
+    let decodedRegion = null, corners = null;
     if (result?.position) {
       const points = Object.values(result.position);
       if (points.length === 4 && points.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))) {
         const x = Math.min(...points.map((p) => p.x)), y = Math.min(...points.map((p) => p.y));
         const right = Math.max(...points.map((p) => p.x)), bottom = Math.max(...points.map((p) => p.y));
         decodedRegion = { x, y, width: Math.max(1, right - x), height: Math.max(1, bottom - y) };
+        // Keep all four corners so the page can apply the visible reticle gate.
+        corners = points.map((point) => ({ x: point.x, y: point.y }));
         if (data.trackRegions) self.postMessage({ id: data.id, type: "region", region: decodedRegion });
       }
     }
@@ -907,7 +945,7 @@ self.onmessage = async ({ data }) => {
       diagnostics.decodedRegion = decodedRegion;
       diagnostics.readsTruncated = diagnostics.wasmCalls > diagnostics.reads.length;
     }
-    self.postMessage({ id: data.id, text, diagnostics });
+    self.postMessage({ id: data.id, text, format: result?.format || "", corners, region: decodedRegion, diagnostics });
   } catch (error) {
     if (error === decodeBudgetExhausted) {
       if (frameDiagnostics) frameDiagnostics.preprocessingBudgetExhausted = true;

@@ -585,9 +585,12 @@ function bindDeferredEvents() {
   });
 
   document.addEventListener("visibilitychange", function () {
-    if (document.hidden) {
+    if (document.hidden && !state.captureRequest) {
       // Release even the camera retained behind the product screen.
       releaseCaptureHardware();
+    } else if (document.hidden) {
+      // The browser may hide the page while showing its camera permission UI.
+      // Keep that in-flight request alive so returning does not prompt again.
     } else if (state.capturePageOpen && !state.quantityCaptureOpen && captureEngineLoaded) {
       scheduleQuickPreviewResumeCheck();
     }
