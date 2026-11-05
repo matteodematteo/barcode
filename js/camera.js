@@ -924,10 +924,9 @@ function makeDetectionPass(attempt) {
     // labels before the scanner advances to the next fresh camera frame.
     thorough: true,
     enhance: phase === 3,
-    // Prefer another camera frame after a short attempt; every fourth pass
-    // gets more time for angled, faint or distant labels. Confirmation reuses
-    // the successful crop and gets time to verify it on the next fresh frame.
-    budgetMs: phase === 0 ? 500 : phase === 3 ? 350 : 120,
+    // Keep ordinary misses moving quickly. Periodic harder reads still get
+    // extra time for faint/angled labels, with a firm cap on long stalls.
+    budgetMs: phase === 0 ? 300 : phase === 3 ? 200 : 120,
     // Periodic whole-preview reads and rotating candidate priority prevent
     // background text from starving another barcode region.
     // Dedicated whole-preview passes also try fixed angles, independent of
@@ -1012,7 +1011,7 @@ function waitForFreshVideoFrame(video) {
       // callback cannot stall capture for 250ms on every attempt. The
       // fallback still decodes only when the stream actually advanced, and
       // the two-fresh-frame confirmation below is untouched.
-      timerId = window.setTimeout(fallback, state.isIOS ? 250 : 90);
+      timerId = window.setTimeout(fallback, state.isIOS ? 100 : 60);
       try {
         callbackId = video.requestVideoFrameCallback(function (_now, metadata) {
           finish(readVideoFrameSample(video, metadata));

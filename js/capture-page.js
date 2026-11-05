@@ -115,7 +115,7 @@ function loadCaptureEngine() {
   captureEnginePromise = new Promise(function (resolve, reject) {
     captureDiagnostics.event("captureBundle.loading");
     const script = document.createElement("script");
-    script.src = "js/capture.bundle.js?v=169";
+    script.src = "js/capture.bundle.js?v=170";
     script.onload = function () {
       captureEngineLoaded = true;
       captureDiagnostics.mark("captureBundle.ready");

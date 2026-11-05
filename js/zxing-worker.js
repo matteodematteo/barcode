@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=169");
+importScripts("capture-frame-worker.js?v=170");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -489,7 +489,9 @@ async function readBarcodeStrip(pixels, rect, options, deadline) {
   if (performance.now() >= deadline) return [];
   // A checksum-valid retail code can be recovered from one clean scanline in
   // a small crop. The page still requires the same code on another live frame.
-  const candidateOptions = { ...options, minLineCount: 1 };
+  // Use ZXing's fast path on native/normalized crops; reserve rotations and
+  // inversion for the enlarged retry, where they are most useful.
+  const candidateOptions = { ...options, tryHarder: false, tryDownscale: false, minLineCount: 1 };
   let results = await readDiagnosticBarcodes(crop, candidateOptions);
   if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
     const normalized = normalizeBarcodePixels(crop, 1, rect.core);
@@ -507,7 +509,7 @@ async function readBarcodeStrip(pixels, rect, options, deadline) {
       const enlarged = rotateBarcodePixels(normalized, 0, 3);
       const scale = enlarged.width / normalized.width;
       if (scale > 1 && performance.now() < deadline) {
-        results = await decodeBarcodePixels(enlarged, { ...candidateOptions, tryDownscale: false },
+        results = await decodeBarcodePixels(enlarged, { ...candidateOptions, tryHarder: true, tryDownscale: false },
           { orientation: "auto", thorough: true, enhance: true }, deadline);
         if (results.some(isAcceptedBarcode)) {
           results = offsetBarcodePositions(
@@ -523,7 +525,9 @@ async function readBarcodeStrip(pixels, rect, options, deadline) {
 async function readCompactColourLabel(pixels, panel, options, deadline) {
   if (performance.now() >= deadline) return [];
   const crop = cropBarcodePixels(pixels, panel);
-  const candidateOptions = { ...options, minLineCount: 1 };
+  // Keep the common compact-label reads cheap. The enlarged fallback below
+  // still gets the decoder's thorough rotations/inversion when needed.
+  const candidateOptions = { ...options, tryHarder: false, tryDownscale: false, minLineCount: 1 };
   let results = await readDiagnosticBarcodes(crop, candidateOptions);
   if (results.some(isAcceptedBarcode)) return offsetBarcodePositions(results, panel);
   if (performance.now() >= deadline) return [];
@@ -540,7 +544,7 @@ async function readCompactColourLabel(pixels, panel, options, deadline) {
   const enlarged = rotateBarcodePixels(normalized, 0, 3);
   const scale = enlarged.width / normalized.width;
   if (scale <= 1 || performance.now() >= deadline) return [];
-  results = await decodeBarcodePixels(enlarged, { ...candidateOptions, tryDownscale: false },
+  results = await decodeBarcodePixels(enlarged, { ...candidateOptions, tryHarder: true, tryDownscale: false },
     { orientation: "auto", thorough: true, enhance: true }, deadline);
   if (!results.some(isAcceptedBarcode)) return [];
   return offsetBarcodePositions(
