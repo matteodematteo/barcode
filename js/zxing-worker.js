@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=181");
+importScripts("capture-frame-worker.js?v=182");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -332,12 +332,33 @@ function normalizeBarcodePixels(pixels, channel = 1, core = null) {
   for (; high > low; high--) { sum += hist[high]; if (sum >= count * 0.02) break; }
   if (high - low < 6) return null;
   const output = new ImageData(width, height), gain = 255 / (high - low);
-  for (let p = 0; p < width * height; p++) {
+  const gray = Uint32Array.from(hist, (_, intensity) => {
+    const value = Math.max(0, Math.min(255, Math.round((intensity - low) * gain)));
+    return 0xff000000 | value * 0x010101;
+  });
+  const target = new Uint32Array(output.data.buffer);
+  for (let p = 0; p < target.length; p++) {
     if ((p & 4095) === 0) checkDecodeBudget();
-    const i = p * 4, value = Math.max(0, Math.min(255, Math.round((data[i + channel] - low) * gain)));
-    output.data[i] = output.data[i + 1] = output.data[i + 2] = value; output.data[i + 3] = 255;
+    target[p] = gray[data[p * 4 + channel]];
   }
   return output;
+}
+
+async function readContrastEan13(pixels, options, deadline, expectedText = "") {
+  const readOptions = { ...options, formats: ["EAN13"], minLineCount: 4, tryInvert: false };
+  for (const channel of [1, 0]) {
+    if (performance.now() >= deadline) break;
+    const normalized = normalizeBarcodePixels(pixels, channel);
+    if (!normalized || performance.now() >= deadline) continue;
+    for (const binarizer of ["LocalAverage", "FixedThreshold"]) {
+      if (performance.now() >= deadline) break;
+      const results = await readDiagnosticBarcodes(normalized, { ...readOptions, binarizer });
+      const matches = results.filter(result => isAcceptedBarcode(result) &&
+        (!expectedText || result.text === expectedText));
+      if (matches.length) return matches;
+    }
+  }
+  return [];
 }
 
 // Locate concentrated parallel edges before resizing/rotating an entire frame.
@@ -881,7 +902,12 @@ async function verifyRetailRegion(pixels, region, options, deadline, expectedTex
   if (firstCrop && expectedText && performance.now() < deadline) {
     const { crop, rect } = firstCrop;
     const angle = estimateBarcodeRotation(crop);
-    const angled = await readAngledBarcode(crop, { ...options, minLineCount: 4 }, angle, deadline);
+    const angledOptions = { ...options, minLineCount: 4 };
+    let angled = await readAngledBarcode(crop, angledOptions, angle, deadline);
+    if (!angled.some(matches) && angle && expectedFormat === "EAN13" && performance.now() < deadline) {
+      const normalized = normalizeBarcodePixels(crop);
+      if (normalized) angled = await readAngledBarcode(normalized, angledOptions, angle, deadline);
+    }
     if (angled.some(matches)) {
       if (frameDiagnostics) frameDiagnostics.verificationEvidence = "four-angled-lines";
       return offsetBarcodePositions(angled.filter(matches), rect);
@@ -1078,6 +1104,11 @@ self.onmessage = async ({ data }) => {
         if (frameDiagnostics) frameDiagnostics.stage = "full-frame-quick";
         results = await readDiagnosticBarcodes(pixels, quick);
       }
+      if (!results.some(isAcceptedBarcode) && data.verificationFormat === "EAN13" &&
+          pixels.width * pixels.height <= 1100000 && performance.now() < deadline) {
+        results = await readContrastEan13(pixels, dense, deadline, data.verificationCode);
+        if (results.length && frameDiagnostics) frameDiagnostics.stage = "ean-contrast-verification";
+      }
       const verification = data.verificationRegion;
       if (!results.some(isAcceptedBarcode) && performance.now() < deadline && verification &&
           [verification.x, verification.y, verification.width, verification.height].every(Number.isFinite) &&
@@ -1117,10 +1148,14 @@ self.onmessage = async ({ data }) => {
       const y = Math.max(0, Math.min(pixels.height - height, Math.round(center - height / 2)));
       const rect = { x: 0, y, width: pixels.width, height };
       if (frameDiagnostics) frameDiagnostics.stage = "retail-verification-band";
-      const band = await readDiagnosticBarcodes(cropBarcodePixels(pixels, rect), dense);
+      const crop = cropBarcodePixels(pixels, rect);
+      const band = await readDiagnosticBarcodes(crop, dense);
       results = offsetBarcodePositions(band.filter(result => isAcceptedBarcode(result) &&
         barcodeText(result) === data.verificationCode &&
         (!data.verificationFormat || result.format === data.verificationFormat)), rect);
+      if (!results.length && data.verificationFormat === "EAN13" && performance.now() < deadline) {
+        results = offsetBarcodePositions(await readContrastEan13(crop, dense, deadline, data.verificationCode), rect);
+      }
     }
     if (!data.verificationCode && !results.some(isAcceptedBarcode) && performance.now() < deadline) {
       let colourPanels = null;
@@ -1163,6 +1198,32 @@ self.onmessage = async ({ data }) => {
               panel.width * panel.height > pixels.width * pixels.height * 0.18) continue;
           results = readFadedCode128(pixels, panel, labelDeadline);
           if (results.some(isAcceptedBarcode)) break;
+        }
+      }
+      if (!results.some(isAcceptedBarcode) && phase % 2 === 0 &&
+          options.formats?.includes("EAN13") && performance.now() < deadline) {
+        // Dim glossy labels can disappear into the whole-frame intensity
+        // range. Normalize a wider aiming band before shelf/angle retries.
+        const y = Math.floor(pixels.height * (phase === 0 ? 0.2 : 0.25));
+        const rect = { x: 0, y, width: pixels.width, height: pixels.height - 2 * y };
+        if (frameDiagnostics) frameDiagnostics.stage = "ean-contrast-band";
+        const crop = cropBarcodePixels(pixels, rect);
+        if (phase === 2) {
+          // Measure the strongest local strip. Gradients elsewhere in the
+          // frame can overwhelm the angle of a short barcode on a bottle.
+          const [strip] = findBarcodeStrips(crop);
+          const angle = strip ? estimateBarcodeRotation(crop, strip) : 0;
+          if (angle && performance.now() < deadline) {
+            const normalized = normalizeBarcodePixels(cropBarcodePixels(crop, strip));
+            if (normalized) {
+              const angled = await readAngledBarcode(normalized,
+                { ...dense, formats: ["EAN13"], minLineCount: 4 }, angle, deadline);
+              results = offsetBarcodePositions(angled, { x: strip.x, y: y + strip.y });
+            }
+          }
+        }
+        if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+          results = offsetBarcodePositions(await readContrastEan13(crop, dense, deadline), rect);
         }
       }
       if (!results.some(isAcceptedBarcode) && phase === 3 && performance.now() < deadline) {
