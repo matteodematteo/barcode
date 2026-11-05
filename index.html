@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f5f6f2" />
-  <meta name="webscanner-version" content="173" />
+  <meta name="webscanner-version" content="174" />
   <script>
     // Keep update discovery independent of the cached application bundle.
     // The worker URL stays stable; its own update checks bypass HTTP caching.
@@ -32,15 +32,15 @@
         navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
       const manifest = document.createElement("link");
       manifest.rel = "manifest";
-      manifest.href = isIOS ? "manifest.ios.webmanifest?v=173" : "manifest.webmanifest?v=173";
+      manifest.href = isIOS ? "manifest.ios.webmanifest?v=174" : "manifest.webmanifest?v=174";
       document.head.appendChild(manifest);
     })();
   </script>
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=173" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=173" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=174" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=174" />
   <title>Web Barcode Scanner</title>
-  <link rel="preload" href="js/app.bundle.js?v=173" as="script" />
-  <link rel="preload" href="css/interface.bundle.css?v=173" as="style" />
+  <link rel="preload" href="js/app.bundle.js?v=174" as="script" />
+  <link rel="preload" href="css/interface.bundle.css?v=174" as="style" />
   <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
        round-trips for the above-the-fold shell (base + scanner + layout +
        essential components). The remaining interface styles load as one small sheet below. -->
@@ -137,6 +137,16 @@
       font-size: .82rem;
     }
     .preview-placeholder[hidden] { display: none; }
+    .camera-zoom-control {
+      position: absolute; z-index: 5; left: 12px; right: 12px; bottom: 48px;
+      display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+      border: 1px solid rgba(255,255,255,.2); border-radius: 14px;
+      color: #fff; background: rgba(8,12,16,.72); backdrop-filter: blur(12px);
+    }
+    .camera-zoom-control[hidden] { display: none; }
+    .camera-zoom-control output { min-width: 3.2em; text-align: right; font-size: .8rem; }
+    .camera-zoom-control input[type="range"] { flex: 1; min-width: 0; accent-color: #ffe276; }
+    .camera-zoom-control label { font-size: .74rem; }
     .preview-meta {
       position: absolute; top: 14px; left: 14px; right: 14px;
       display: flex; justify-content: space-between; gap: 12px; pointer-events: none;
@@ -371,13 +381,13 @@
   <!-- These sheets affect the visible page geometry. Keep them render-blocking so
        browsers paint the completed interface once instead of restyling sections
        progressively on a slow connection. -->
-  <link rel="stylesheet" href="css/interface.bundle.css?v=173" />
+  <link rel="stylesheet" href="css/interface.bundle.css?v=174" />
 </head>
 <body>
   <main class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=173" width="34" height="34" alt="" decoding="async" /></span>
+        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=174" width="34" height="34" alt="" decoding="async" /></span>
         <div><h1>Web Scanner</h1></div>
       </div>
       <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
@@ -555,6 +565,11 @@
         <video id="cameraPreview" playsinline webkit-playsinline muted disablepictureinpicture></video>
         <div id="cameraPreviewQuagga" hidden></div>
         <div class="preview-grid" aria-hidden="true"></div>
+        <div class="camera-zoom-control" id="cameraZoomControl" hidden>
+          <label for="cameraZoomRange">Zoom</label>
+          <input id="cameraZoomRange" type="range" min="1" max="1" step="0.1" value="1" disabled />
+          <output id="cameraZoomValue" for="cameraZoomRange">1.0×</output>
+        </div>
         <div class="focus-target" id="focusTarget" aria-hidden="true" hidden></div>
         <div class="focus-hint" id="focusHint" role="status" aria-live="polite">Tap preview to focus</div>
         <div class="barcode-tracker" id="barcodeTracker" aria-hidden="true" hidden>
@@ -833,6 +848,6 @@
     <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
   </div>
   <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
-  <script src="js/app.bundle.js?v=173" defer></script>
+  <script src="js/app.bundle.js?v=174" defer></script>
 </body>
 </html>

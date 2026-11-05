@@ -328,6 +328,9 @@ function startPreviewWatchdog() {
 
 
 async function stopTracks() {
+  window.clearTimeout(cameraZoomApplyTimer);
+  cameraZoomApplyTimer = 0;
+  hideCameraZoomControl();
   stopScanning(true);
   stopPreviewWatchdog();
   clearFocusRefreshTimers();
@@ -561,6 +564,138 @@ function getSquareCropSize(video) {
   const width = video.videoWidth || preferredSquareSize;
   const height = video.videoHeight || preferredSquareSize;
   return Math.max(1, Math.min(width, height));
+}
+
+const cameraZoomMemories = new Map();
+let cameraZoomApplyTimer = 0;
+let focusGateCanvas = null;
+let focusGateContext = null;
+
+function hideCameraZoomControl() {
+  const controls = state.els;
+  if (!controls?.cameraZoomControl) return;
+  controls.cameraZoomControl.hidden = true;
+  controls.cameraZoomRange.disabled = true;
+}
+
+function syncCameraZoomControl(track) {
+  const controls = state.els;
+  if (!controls?.cameraZoomRange || !track?.getCapabilities) return hideCameraZoomControl();
+  let capabilities, settings;
+  try { capabilities = track.getCapabilities(); settings = track.getSettings?.() || {}; }
+  catch (_) { return hideCameraZoomControl(); }
+  const range = capabilities.zoom;
+  if (!range || !Number.isFinite(range.min) || !Number.isFinite(range.max) || range.max <= range.min) {
+    return hideCameraZoomControl();
+  }
+  const deviceId = settings.deviceId || "";
+  const saved = deviceId ? cameraZoomMemories.get(deviceId) : null;
+  const value = Math.max(range.min, Math.min(range.max,
+    Number.isFinite(saved) ? saved : Number.isFinite(settings.zoom) ? settings.zoom : Math.max(range.min, Math.min(range.max, 1))));
+  const input = controls.cameraZoomRange;
+  input.min = String(range.min);
+  input.max = String(range.max);
+  input.step = String(range.step > 0 ? range.step : Math.max(0.05, (range.max - range.min) / 80));
+  input.value = String(value);
+  input.disabled = false;
+  controls.cameraZoomValue.value = `${value.toFixed(1)}×`;
+  controls.cameraZoomControl.hidden = false;
+  if (Number.isFinite(saved) && Math.abs((Number(settings.zoom) || 1) - value) > Math.max(0.02, range.step || 0)) {
+    applyCameraTrackConstraints(track, { zoom: value }).catch(() => {});
+  }
+}
+
+function applySelectedCameraZoom() {
+  const track = state.track;
+  const input = state.els?.cameraZoomRange;
+  if (!track || track !== state.track || !input || input.disabled) return;
+  const value = Number(input.value);
+  if (!Number.isFinite(value)) return;
+  state.els.cameraZoomValue.value = `${value.toFixed(1)}×`;
+  window.clearTimeout(cameraZoomApplyTimer);
+  cameraZoomApplyTimer = window.setTimeout(async function () {
+    if (!isCurrentCameraTrack(track)) return;
+    try {
+      if (!await applyCameraTrackConstraints(track, { zoom: value })) return;
+      const actual = Number(track.getSettings?.().zoom);
+      const applied = Number.isFinite(actual) ? actual : value;
+      const deviceId = track.getSettings?.().deviceId;
+      if (deviceId) {
+        cameraZoomMemories.delete(deviceId);
+        cameraZoomMemories.set(deviceId, applied);
+        while (cameraZoomMemories.size > 8) cameraZoomMemories.delete(cameraZoomMemories.keys().next().value);
+      }
+      state.els.cameraZoomValue.value = `${applied.toFixed(1)}×`;
+    } catch (error) {
+      captureDiagnostics.error("camera.zoom", error, captureDiagnostics.current);
+      hideCameraZoomControl();
+      setStatus("Zoom is unavailable on this camera");
+    }
+  }, 110);
+}
+
+function measurePreviewSharpness(video) {
+  if (!video?.videoWidth || !video?.videoHeight) return null;
+  try {
+    if (!focusGateCanvas) {
+      focusGateCanvas = document.createElement("canvas");
+      focusGateCanvas.width = 112;
+      focusGateCanvas.height = 64;
+      focusGateContext = focusGateCanvas.getContext("2d", { alpha: false, willReadFrequently: true });
+    }
+    if (!focusGateContext) return null;
+    focusGateContext.drawImage(video, 0, 0, focusGateCanvas.width, focusGateCanvas.height);
+    const { data, width, height } = focusGateContext.getImageData(0, 0, focusGateCanvas.width, focusGateCanvas.height);
+    const luma = new Uint8Array(width * height);
+    for (let p = 0; p < luma.length; p++) {
+      const i = p * 4;
+      luma[p] = (data[i] * 77 + data[i + 1] * 150 + data[i + 2] * 29) >> 8;
+    }
+    let sum = 0, sumSq = 0, count = 0;
+    for (let y = 1; y < height - 1; y += 2) for (let x = 1; x < width - 1; x += 2) {
+      const p = y * width + x;
+      const edge = 4 * luma[p] - luma[p - 1] - luma[p + 1] - luma[p - width] - luma[p + width];
+      sum += edge; sumSq += edge * edge; count++;
+    }
+    return count ? Math.max(0, sumSq / count - (sum / count) ** 2) : null;
+  } catch (_) { return null; }
+}
+
+async function waitForPreviewFocusSettle(track, session) {
+  const focus = getCameraFocusState(track);
+  if (focus.previewSharpnessSettled || focus.holdActive || focus.manualPoint) return;
+  const video = state.els.cameraPreview;
+  const started = performance.now(), deadline = started + 1400;
+  let best = -Infinity, lastImprovement = started, samples = 0, lastDistance = NaN, stableDistanceSamples = 0;
+  state.focusGateActive = true;
+  setStatus("Focusing camera… hold the barcode steady");
+  try {
+    while (performance.now() < deadline && session === state.scanSession && state.capturePageOpen && !document.hidden) {
+      if (focus.pending) await focus.pending.catch(() => {});
+      await new Promise(resolve => window.setTimeout(resolve, 120));
+      const sharpness = measurePreviewSharpness(video);
+      if (Number.isFinite(sharpness)) {
+        samples++;
+        if (sharpness > best * 1.06 || !Number.isFinite(best)) {
+          best = sharpness; lastImprovement = performance.now();
+        }
+      }
+      const distance = Number(track.getSettings?.().focusDistance);
+      const step = Number(track.getCapabilities?.().focusDistance?.step) || 0.01;
+      if (Number.isFinite(distance) && Number.isFinite(lastDistance) && Math.abs(distance - lastDistance) <= step + 1e-4) {
+        stableDistanceSamples++;
+      } else stableDistanceSamples = 0;
+      if (Number.isFinite(distance)) lastDistance = distance;
+      const elapsed = performance.now() - started;
+      if (elapsed >= 360 && samples >= 3 && performance.now() - lastImprovement >= 360) break;
+      if (elapsed >= 360 && stableDistanceSamples >= 3 && Number.isFinite(best) && best > 10) break;
+    }
+    focus.previewSharpnessSettled = true;
+    captureDiagnostics.event("focus.sharpnessGate", { elapsedMs: Math.round(performance.now() - started),
+      samples, sharpness: Number.isFinite(best) ? Math.round(best) : null }, captureDiagnostics.current);
+  } finally {
+    state.focusGateActive = false;
+  }
 }
 
 
@@ -1242,6 +1377,7 @@ async function startCameraStream(preferredCameraId) {
   state.scannerEngine = "zxing-wasm";
   state.activeDeviceId = track?.getSettings?.().deviceId || preferredCameraId || state.activeDeviceId;
   saveCameraId(state.activeDeviceId);
+  syncCameraZoomControl(track);
 
   state.els.cameraPreview.muted = true;
   state.els.cameraPreview.setAttribute("playsinline", "");
@@ -1366,7 +1502,7 @@ function createCameraFocusState() {
   return {
     mode: "", pending: null, updatedAt: 0, lastForcedAt: -Infinity,
     pointRejected: false, singleShotUnavailable: false, manualRequest: 0,
-    manualPoint: false, point: null, scanPoint: null,
+    manualPoint: false, point: null, scanPoint: null, previewSharpnessSettled: false,
     // Remember the last lens distance that produced a sharp frame. It is
     // reused briefly on the next capture before continuous AF is restored.
     distanceMemory: null, holdActive: false, holdMemory: 0, holdTimer: 0, holdStartedAt: 0
@@ -1576,6 +1712,7 @@ async function requestFocusRefresh(track, options = {}) {
   }
   const manualRequest = options.manual ? ++focus.manualRequest : focus.manualRequest;
   if (options.manual) {
+    focus.previewSharpnessSettled = false;
     // A user's selected target remains authoritative for this capture. Do not
     // let decoder candidates change it again a few seconds after the tap.
     if (focus.holdActive) {
@@ -1806,11 +1943,15 @@ function setPreviewFocusFeedback(message) {
 
 function initPreviewFocus() {
   const preview = state.els.previewFrame;
+  if (state.els.cameraZoomRange && !state.els.cameraZoomRange.dataset.bound) {
+    state.els.cameraZoomRange.addEventListener("input", applySelectedCameraZoom);
+    state.els.cameraZoomRange.dataset.bound = "true";
+  }
   let tap = null;
   let focusTap = 0;
   preview.addEventListener("pointerdown", function (event) {
     tap = null;
-    if (!event.isPrimary || event.button !== 0 || event.target.closest("button")) return;
+    if (!event.isPrimary || event.button !== 0 || event.target.closest("button,input,select,label")) return;
     tap = { id: event.pointerId, x: event.clientX, y: event.clientY, time: Date.now() };
   }, { passive: true });
   preview.addEventListener("pointermove", function (event) {
@@ -2034,7 +2175,9 @@ async function startScanning() {
     finishFocusDistanceHold(state.track, session);
   } else {
     scheduleFocusRefresh(state.track, { newScan: true, session });
+    await waitForPreviewFocusSettle(state.track, session);
   }
+  if (!state.capturePageOpen || generation !== state.captureGeneration || session !== state.scanSession || document.hidden) return;
 
   resetBarcodeTracking();
   state.lastBarcodeRegion = null;

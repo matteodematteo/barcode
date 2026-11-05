@@ -14,6 +14,40 @@ function warmCaptureEngine() {
   loadCaptureEngine().then(function () { return ensureZXingLoaded(); }).catch(function () {});
 }
 
+function getNativeBarcodeCapture() {
+  const capacitor = window.Capacitor;
+  const scanner = window.NativeBarcodeCapture;
+  return capacitor?.isNativePlatform?.() && typeof scanner?.scan === "function" ? scanner : null;
+}
+
+async function startNativeBarcodeCapture(generation) {
+  const scanner = getNativeBarcodeCapture();
+  if (!scanner) return false;
+  state.nativeCaptureActive = true;
+  state.isCameraRunning = false;
+  state.isScanning = true;
+  state.scanSession += 1;
+  state.els.previewPlaceholder.textContent = "Opening native camera…";
+  state.els.previewPlaceholder.hidden = false;
+  setStatus("Scanning with native camera…");
+  try {
+    const result = await scanner.scan({ formats: CONFIG.detectorFormats });
+    if (!state.capturePageOpen || generation !== state.captureGeneration) return true;
+    if (result?.error) throw new Error(String(result.error));
+    if (result?.barcode) {
+      captureDiagnostics.candidate(String(result.barcode));
+      await handleDetectedCode(String(result.barcode));
+    } else if (result?.cancelled) {
+      closeCapturePage();
+    } else {
+      throw new Error("Native scanner returned no barcode result.");
+    }
+  } finally {
+    state.nativeCaptureActive = false;
+  }
+  return true;
+}
+
 function requestCaptureStream(deviceId) {
   const request = { generation: state.captureGeneration, deviceId: deviceId || "",
     stream: null, playback: null, promise: null };
@@ -116,7 +150,7 @@ function loadCaptureEngine() {
   captureEnginePromise = new Promise(function (resolve, reject) {
     captureDiagnostics.event("captureBundle.loading");
     const script = document.createElement("script");
-    script.src = "js/capture.bundle.js?v=173";
+    script.src = "js/capture.bundle.js?v=174";
     script.onload = function () {
       captureEngineLoaded = true;
       captureDiagnostics.mark("captureBundle.ready");
@@ -142,15 +176,16 @@ async function openCapturePage() {
   const generation = ++state.captureGeneration;
   // Begin the hardware request before focus/layout work in the capture route.
   performance.mark("webscanner-capture-request");
+  const nativeScanner = getNativeBarcodeCapture();
   const selectedDeviceId = state.activeDeviceId || readSavedCameraId();
   const runningDeviceId = state.track?.getSettings?.().deviceId || "";
   // The preview stream survives a closed capture route. Reuse it only when it
   // is actually the camera currently selected in Personal Settings.
-  const reuseCamera = state.isCameraRunning && state.track?.readyState === "live" && state.stream &&
+  const reuseCamera = !nativeScanner && state.isCameraRunning && state.track?.readyState === "live" && state.stream &&
     (!selectedDeviceId || runningDeviceId === selectedDeviceId);
   captureDiagnostics.start({ reusedCamera: Boolean(reuseCamera), mode: state.isQuantityEntryUnlocked ? "quantity" : "classic" });
   if (reuseCamera) captureDiagnostics.camera(state.track);
-  if (!reuseCamera) {
+  if (!nativeScanner && !reuseCamera) {
     if (state.stream) releaseCaptureHardware();
     requestCaptureStream(state.activeDeviceId);
   }
@@ -169,6 +204,7 @@ async function openCapturePage() {
   try {
     await loadCaptureEngine();
     if (!state.capturePageOpen || generation !== state.captureGeneration) return;
+    if (await startNativeBarcodeCapture(generation)) return;
     await startScanning();
   } catch (error) {
     if (!state.capturePageOpen || generation !== state.captureGeneration || error.name === "AbortError") return;
