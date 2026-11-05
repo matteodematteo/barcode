@@ -15,7 +15,8 @@ function warmCaptureEngine() {
 }
 
 function requestCaptureStream(deviceId) {
-  const request = { generation: state.captureGeneration, stream: null, playback: null, promise: null };
+  const request = { generation: state.captureGeneration, deviceId: deviceId || "",
+    stream: null, playback: null, promise: null };
   const diagnostic = captureDiagnostics.current;
   captureDiagnostics.mark("camera.request", { savedCamera: Boolean(deviceId) }, diagnostic);
   state.captureRequest = request;
@@ -115,7 +116,7 @@ function loadCaptureEngine() {
   captureEnginePromise = new Promise(function (resolve, reject) {
     captureDiagnostics.event("captureBundle.loading");
     const script = document.createElement("script");
-    script.src = "js/capture.bundle.js?v=170";
+    script.src = "js/capture.bundle.js?v=171";
     script.onload = function () {
       captureEngineLoaded = true;
       captureDiagnostics.mark("captureBundle.ready");
@@ -141,7 +142,12 @@ async function openCapturePage() {
   const generation = ++state.captureGeneration;
   // Begin the hardware request before focus/layout work in the capture route.
   performance.mark("webscanner-capture-request");
-  const reuseCamera = state.isCameraRunning && state.track?.readyState === "live" && state.stream;
+  const selectedDeviceId = state.activeDeviceId || readSavedCameraId();
+  const runningDeviceId = state.track?.getSettings?.().deviceId || "";
+  // The preview stream survives a closed capture route. Reuse it only when it
+  // is actually the camera currently selected in Personal Settings.
+  const reuseCamera = state.isCameraRunning && state.track?.readyState === "live" && state.stream &&
+    (!selectedDeviceId || runningDeviceId === selectedDeviceId);
   captureDiagnostics.start({ reusedCamera: Boolean(reuseCamera), mode: state.isQuantityEntryUnlocked ? "quantity" : "classic" });
   if (reuseCamera) captureDiagnostics.camera(state.track);
   if (!reuseCamera) {

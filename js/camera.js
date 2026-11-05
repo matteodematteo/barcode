@@ -499,7 +499,10 @@ async function refreshDevices(preferredDeviceId, expectedStream) {
 
   state.devices = devices;
   const savedCameraId = readSavedCameraId();
-  const requestedId = preferredDeviceId || state.activeDeviceId || savedCameraId || "";
+  // state.activeDeviceId can change while enumerateDevices is pending (for
+  // example, when the user picks a camera in Settings). Honor that latest
+  // selection instead of restoring the camera from an older refresh call.
+  const requestedId = state.activeDeviceId || preferredDeviceId || savedCameraId || "";
   const fallbackId = resolvePreferredDeviceId(state.devices, requestedId);
   const hasMatch = state.devices.some((device) => device.deviceId === fallbackId);
   const currentId = hasMatch ? fallbackId : chooseBestDefaultDevice(state.devices);
@@ -1218,7 +1221,9 @@ async function startCameraStream(preferredCameraId) {
   const session = state.scanSession;
   const generation = state.captureGeneration;
 
-  const request = state.captureRequest || requestCaptureStream(preferredCameraId);
+  const pendingRequest = state.captureRequest;
+  const request = pendingRequest && pendingRequest.deviceId === (preferredCameraId || "")
+    ? pendingRequest : requestCaptureStream(preferredCameraId);
   const result = await request.promise;
   if (state.captureRequest === request) state.captureRequest = null;
   if (result.error) throw result.error;
