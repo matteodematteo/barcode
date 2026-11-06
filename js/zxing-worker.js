@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=183");
+importScripts("capture-frame-worker.js?v=184");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -311,6 +311,28 @@ function findBarcodeStrips(pixels) {
   }
   regions.sort((a, b) => b.score - a.score);
   return regions.slice(0, 8);
+}
+
+function measureBarcodeFocus(pixels, strips) {
+  const strip = strips.find(({ edges, core }) => edges >= 35 && edges <= 160 &&
+    core.height >= 12 && core.height / core.width >= 0.055 && core.width < pixels.width * 0.8);
+  if (!strip) return null;
+  const { width, height } = strip.core;
+  const x = strip.x + strip.core.x, y = strip.y + strip.core.y;
+  let variation = 0, curvature = 0;
+  // Wide, blurry transitions change gradually. Normalize edge curvature by
+  // local contrast so a dim but sharply printed barcode can stay in focus.
+  for (const fraction of [0.25, 0.5, 0.75]) {
+    const row = ((y + Math.round(height * fraction)) * pixels.width + x) * 4 + 1;
+    for (let i = row + 4; i < row + (width - 1) * 4; i += 4) {
+      const before = pixels.data[i] - pixels.data[i - 4];
+      const after = pixels.data[i + 4] - pixels.data[i];
+      if (Math.abs(before) + Math.abs(after) < 5) continue;
+      variation += Math.abs(before) + Math.abs(after);
+      curvature += Math.abs(after - before);
+    }
+  }
+  return variation > width * 2 ? { x, y, width, height, sharpness: curvature / variation } : null;
 }
 
 // Normalize a colour channel using the bars' own intensity range, rather than
@@ -1052,6 +1074,11 @@ self.onmessage = async ({ data }) => {
     workerMs: performance.now() - started, budgetMs: data.budgetMs,
     budgetExceeded: Boolean(data.budgetMs > 0 && performance.now() - started > data.budgetMs),
     workerOverheadMs: Math.max(0, performance.now() - started - frameDiagnostics.wasmMs) } : undefined;
+  let focusTarget = null, focusEvidence = null;
+  const reportFocus = () => {
+    const region = focusEvidence || focusTarget;
+    if (data.assistCamera && region) self.postMessage({ id: data.id, type: "focus", region });
+  };
   try {
     const options = {
       formats: data.formats,
@@ -1069,7 +1096,7 @@ self.onmessage = async ({ data }) => {
     // interrupted, but an expired budget must not start further retries.
     // Direct callers without a budget retain the full fallback behavior.
     const deadline = decodeDeadline = started + (data.budgetMs > 0 ? data.budgetMs : Infinity);
-    let results = [], focusTarget = null, triedScheduledAngle = false;
+    let results = [], triedScheduledAngle = false;
     const quick = { ...options, tryHarder: false, tryDownscale: false, binarizer: "LocalAverage" };
     const dense = { ...quick, tryHarder: true };
     const preferred = data.preferredRegion;
@@ -1161,24 +1188,26 @@ self.onmessage = async ({ data }) => {
       let colourPanels = null;
       const phase = Math.abs(data.regionOffset || 0) % 4;
       const scheduledAngle = data.orientation === "auto" ? 0 : Number(data.orientation);
+      const readAimedAngle = async () => {
+        const x = Math.floor(pixels.width * 0.075), y = Math.floor(pixels.height * 0.15);
+        const rect = { x, y, width: pixels.width - x * 2, height: pixels.height - y * 2 };
+        const angle = estimateBarcodeRotation(pixels, rect);
+        if (!angle || performance.now() >= deadline) return [];
+        if (frameDiagnostics) frameDiagnostics.stage = "aimed-angle";
+        return offsetBarcodePositions(
+          await readAngledBarcode(cropBarcodePixels(pixels, rect), dense, angle, deadline), rect);
+      };
       if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
         if (Number.isFinite(scheduledAngle) && scheduledAngle) {
           // Give steep/off-center barcodes a turn before shelf and text searches.
           triedScheduledAngle = true;
           if (frameDiagnostics) frameDiagnostics.stage = "scheduled-angle";
           results = await readAngledBarcode(pixels, options, scheduledAngle, deadline);
-        } else if (phase === 1) {
-          const x = Math.floor(pixels.width * 0.075), y = Math.floor(pixels.height * 0.15);
-          const rect = { x, y, width: pixels.width - x * 2, height: pixels.height - y * 2 };
-          const angle = estimateBarcodeRotation(pixels, rect);
-          if (angle && performance.now() < deadline) {
-            if (frameDiagnostics) frameDiagnostics.stage = "aimed-angle";
-            results = offsetBarcodePositions(
-              await readAngledBarcode(cropBarcodePixels(pixels, rect), dense, angle, deadline), rect);
-          }
+        } else if (phase === 1 && !data.adaptiveFocus) {
+          results = await readAimedAngle();
         }
       }
-      let centerBand = null;
+      let centerBand = null, centerStrips = null;
       const bandY = Math.floor(pixels.height * 0.35);
       if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
         if (frameDiagnostics) frameDiagnostics.stage = "center-strip-priority";
@@ -1199,6 +1228,16 @@ self.onmessage = async ({ data }) => {
           results = readFadedCode128(pixels, panel, labelDeadline);
           if (results.some(isAcceptedBarcode)) break;
         }
+      }
+      if (!results.some(isAcceptedBarcode) && data.adaptiveFocus && centerBand && performance.now() < deadline) {
+        // Reuse the strip search for decoding. Preserve its focus observation
+        // even if a later fallback exhausts this frame's decoding budget.
+        centerStrips = findBarcodeStrips(centerBand).map(rect => ({ ...rect, y: rect.y + bandY }));
+        focusEvidence = measureBarcodeFocus(pixels, centerStrips);
+      }
+      if (phase === 1 && data.adaptiveFocus && !triedScheduledAngle &&
+          !results.some(isAcceptedBarcode) && performance.now() < deadline) {
+        results = await readAimedAngle();
       }
       if (!results.some(isAcceptedBarcode) && phase % 2 === 0 &&
           options.formats?.includes("EAN13") && performance.now() < deadline) {
@@ -1244,7 +1283,7 @@ self.onmessage = async ({ data }) => {
         // Search the aimed center band first. A small retail label should not
         // spend its short frame budget on distant shelves and package text.
         if (frameDiagnostics) frameDiagnostics.stage = "center-strip-priority";
-        const centerStrips = findBarcodeStrips(centerBand).map((rect) => ({ ...rect, y: rect.y + bandY }));
+        centerStrips ||= findBarcodeStrips(centerBand).map((rect) => ({ ...rect, y: rect.y + bandY }));
         if (frameDiagnostics) {
           frameDiagnostics.centerStrips = centerStrips.length;
           frameDiagnostics.priorityStrips = centerStrips.slice(0, 3).map(({ x, y, width, height, edges }) =>
@@ -1298,6 +1337,7 @@ self.onmessage = async ({ data }) => {
         // The full preview remains searchable when the label is off center.
         if (frameDiagnostics) frameDiagnostics.stage = "barcode-strip-priority";
         globalStrips = findBarcodeStrips(pixels);
+        if (data.adaptiveFocus && !focusEvidence) focusEvidence = measureBarcodeFocus(pixels, globalStrips);
         if (frameDiagnostics) frameDiagnostics.globalStrips = globalStrips.length;
         for (const rect of globalStrips.slice(0, 3)) {
           if (performance.now() >= deadline) break;
@@ -1445,14 +1485,12 @@ self.onmessage = async ({ data }) => {
         if (data.trackRegions) self.postMessage({ id: data.id, type: "region", region: decodedRegion });
       }
     }
-    if (!result && focusTarget && data.assistCamera) {
-      self.postMessage({ id: data.id, type: "focus", region: focusTarget });
-    }
+    if (!result) reportFocus();
     const text = barcodeText(result);
     const diagnostics = measurements();
     if (diagnostics) {
       diagnostics.format = result?.format || null;
-      diagnostics.candidateRegion = focusTarget;
+      diagnostics.candidateRegion = focusEvidence || focusTarget;
       diagnostics.decodedRegion = decodedRegion;
       diagnostics.readsTruncated = diagnostics.wasmCalls > diagnostics.reads.length;
     }
@@ -1460,6 +1498,7 @@ self.onmessage = async ({ data }) => {
   } catch (error) {
     if (error === decodeBudgetExhausted) {
       if (frameDiagnostics) frameDiagnostics.preprocessingBudgetExhausted = true;
+      reportFocus();
       self.postMessage({ id: data.id, text: "", diagnostics: measurements() });
     } else {
       self.postMessage({ id: data.id, error: error.message || "Barcode decoding failed", diagnostics: measurements() });

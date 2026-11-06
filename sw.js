@@ -1,16 +1,16 @@
 // Offline app shell. All paths are resolved against the service worker scope
 // so installs work both at the domain root and from a deployed subfolder.
-const CACHE_NAME = 'webscanner-v183';
-const APP_VERSION = '183';
+const CACHE_NAME = 'webscanner-v184';
+const APP_VERSION = '184';
 const APP_SHELL_URL = new URL('index.html', self.registration.scope).toString();
 const CACHEABLE_DESTINATIONS = new Set(['script', 'style', 'document', 'image', 'font']);
 const ASSETS_TO_CACHE = [
-  './', 'index.html', 'manifest.webmanifest?v=183', 'manifest.ios.webmanifest?v=183',
-  'apple-touch-icon.png?v=183', 'icon-192.png?v=183', 'icon-512.png?v=183',
-  'css/interface.bundle.css?v=183',
-  'js/app.bundle.js?v=183', 'js/capture.bundle.js?v=183',
-  'js/zxing-worker.js?v=183',
-  'js/capture-frame-worker.js?v=183',
+  './', 'index.html', 'manifest.webmanifest?v=184', 'manifest.ios.webmanifest?v=184',
+  'apple-touch-icon.png?v=184', 'icon-192.png?v=184', 'icon-512.png?v=184',
+  'css/interface.bundle.css?v=184',
+  'js/app.bundle.js?v=184', 'js/capture.bundle.js?v=184',
+  'js/zxing-worker.js?v=184',
+  'js/capture-frame-worker.js?v=184',
   'js/vendor/zxing-wasm/3.1.5/reader.js',
   'js/vendor/zxing-wasm/3.1.5/zxing_reader.wasm'
 ].map((url) => new URL(url, self.registration.scope).toString());
