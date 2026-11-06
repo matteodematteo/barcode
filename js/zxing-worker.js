@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=184");
+importScripts("capture-frame-worker.js?v=186");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -526,6 +526,28 @@ function cropBarcodePixels(pixels, rect) {
   return output;
 }
 
+async function readThinBars(pixels, options) {
+  if (!options.formats?.includes("EAN13")) return [];
+  // Thin dark bars can lose a pixel on each edge through glare, blur or print
+  // loss. Widen them horizontally by one pixel without moving the scan rows.
+  checkDecodeBudget();
+  const { width, height, data } = pixels;
+  const corrected = new ImageData(width, height);
+  const target = new Uint32Array(corrected.data.buffer);
+  for (let y = 0; y < height; y++) {
+    if ((y & 7) === 0) checkDecodeBudget();
+    const start = y * width;
+    for (let x = 0; x < width; x++) {
+      const p = start + x;
+      const value = Math.min(data[p * 4 + 1], data[(x ? p - 1 : p) * 4 + 1],
+        data[(x + 1 < width ? p + 1 : p) * 4 + 1]);
+      target[p] = 0xff000000 | value * 0x010101;
+    }
+  }
+  return readDiagnosticBarcodes(corrected, { ...options, formats: ["EAN13"], tryHarder: true,
+    tryRotate: false, tryInvert: false, tryDownscale: false, minLineCount: Math.max(3, options.minLineCount) });
+}
+
 async function readBarcodeStrip(pixels, rect, options, deadline) {
   if (performance.now() >= deadline) return [];
   const crop = cropBarcodePixels(pixels, rect);
@@ -908,6 +930,13 @@ async function verifyRetailRegion(pixels, region, options, deadline, expectedTex
       if (frameDiagnostics) frameDiagnostics.verificationEvidence = "four-lines";
       return offsetBarcodePositions(strong.filter(matches), rect);
     }
+    if (!weakReads.length && expectedFormat === "EAN13" && performance.now() < deadline) {
+      const corrected = await readThinBars(crop, options);
+      if (corrected.some(matches)) {
+        if (frameDiagnostics) frameDiagnostics.verificationEvidence = "four-corrected-lines";
+        return offsetBarcodePositions(corrected.filter(matches), rect);
+      }
+    }
     if (performance.now() >= deadline) break;
     // Short/tilted bars may supply only two matching rows. Accept that local
     // read only when a second, wider context agrees on this fresh frame.
@@ -1131,6 +1160,14 @@ self.onmessage = async ({ data }) => {
         if (frameDiagnostics) frameDiagnostics.stage = "full-frame-quick";
         results = await readDiagnosticBarcodes(pixels, quick);
       }
+      if (!results.some(isAcceptedBarcode) && !data.verificationCode && !data.verificationRegion &&
+          data.thorough !== false &&
+          performance.now() < deadline) {
+        // The quick pass samples too few rows for short and reflective labels.
+        // Give the native pixels a dense read before expensive angle/crop work.
+        if (frameDiagnostics) frameDiagnostics.stage = "full-frame-dense";
+        results = await readDiagnosticBarcodes(pixels, { ...dense, tryInvert: false });
+      }
       if (!results.some(isAcceptedBarcode) && data.verificationFormat === "EAN13" &&
           pixels.width * pixels.height <= 1100000 && performance.now() < deadline) {
         results = await readContrastEan13(pixels, dense, deadline, data.verificationCode);
@@ -1187,6 +1224,21 @@ self.onmessage = async ({ data }) => {
     if (!data.verificationCode && !results.some(isAcceptedBarcode) && performance.now() < deadline) {
       let colourPanels = null;
       const phase = Math.abs(data.regionOffset || 0) % 4;
+      if (phase === 1 && data.thorough !== false) {
+        // Splitting the outer preview into bands shifts ZXing's row sampling
+        // and keeps bright background outside a small label's scan.
+        if (frameDiagnostics) frameDiagnostics.stage = "outer-band-dense";
+        for (const start of [0.03, 0.65]) {
+          if (performance.now() >= deadline) break;
+          const rect = { x: 0, y: Math.floor(pixels.height * start), width: pixels.width,
+            height: Math.ceil(pixels.height * 0.32) };
+          results = await readDiagnosticBarcodes(cropBarcodePixels(pixels, rect), { ...dense, tryInvert: false });
+          if (results.some(isAcceptedBarcode)) {
+            results = offsetBarcodePositions(results, rect);
+            break;
+          }
+        }
+      }
       const scheduledAngle = data.orientation === "auto" ? 0 : Number(data.orientation);
       const readAimedAngle = async () => {
         const x = Math.floor(pixels.width * 0.075), y = Math.floor(pixels.height * 0.15);
@@ -1214,6 +1266,9 @@ self.onmessage = async ({ data }) => {
         centerBand = cropBarcodePixels(pixels, { x: 0, y: bandY, width: pixels.width,
           height: Math.ceil(pixels.height * 0.3) });
         results = await readDiagnosticBarcodes(centerBand, dense);
+        if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+          results = await readThinBars(centerBand, dense);
+        }
         if (results.some(isAcceptedBarcode)) results = offsetBarcodePositions(results, { x: 0, y: bandY });
       }
       if (!results.some(isAcceptedBarcode) && options.formats?.includes("Code128") && performance.now() < deadline) {
