@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f5f6f2" />
-  <meta name="webscanner-version" content="192" />
+  <meta name="webscanner-version" content="193" />
   <script>
     // Keep update discovery independent of the cached application bundle.
     // The worker URL stays stable; its own update checks bypass HTTP caching.
@@ -32,15 +32,15 @@
         navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
       const manifest = document.createElement("link");
       manifest.rel = "manifest";
-      manifest.href = isIOS ? "manifest.ios.webmanifest?v=192" : "manifest.webmanifest?v=192";
+      manifest.href = isIOS ? "manifest.ios.webmanifest?v=193" : "manifest.webmanifest?v=193";
       document.head.appendChild(manifest);
     })();
   </script>
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=192" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=192" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=193" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=193" />
   <title>Web Barcode Scanner</title>
-  <link rel="preload" href="js/app.bundle.js?v=192" as="script" />
-  <link rel="preload" href="css/interface.bundle.css?v=192" as="style" />
+  <link rel="preload" href="js/app.bundle.js?v=193" as="script" />
+  <link rel="preload" href="css/interface.bundle.css?v=193" as="style" />
   <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
        round-trips for the above-the-fold shell (base + scanner + layout +
        essential components). The remaining interface styles load as one small sheet below. -->
@@ -381,13 +381,13 @@
   <!-- These sheets affect the visible page geometry. Keep them render-blocking so
        browsers paint the completed interface once instead of restyling sections
        progressively on a slow connection. -->
-  <link rel="stylesheet" href="css/interface.bundle.css?v=192" />
+  <link rel="stylesheet" href="css/interface.bundle.css?v=193" />
 </head>
 <body>
   <main class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=192" width="34" height="34" alt="" decoding="async" /></span>
+        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=193" width="34" height="34" alt="" decoding="async" /></span>
         <div><h1>Web Scanner</h1></div>
       </div>
       <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
@@ -477,7 +477,7 @@
             </div>
             <div class="pi-row sales-summary-row">
               <div class="field-card pi-w-50" id="field_create_time_card"><label for="field_create_time">Saved</label><div class="field-value" id="field_create_time"></div></div>
-              <div class="field-card pi-w-33" id="field_sales_quantity_card"><label for="field_sales_quantity">Sales</label><div class="field-value sales-field-value"><span id="field_sales_quantity"></span><span class="sales-loader" id="salesQuantityLoader" hidden></span></div></div>
+              <div class="field-card pi-w-33" id="field_sales_quantity_card"><label for="field_sales_quantity">Sales<span class="sales-period-label"></span></label><div class="field-value sales-field-value"><span id="field_sales_quantity"></span><span class="sales-loader" id="salesQuantityLoader" hidden></span></div></div>
               <button class="btn btn-muted sales-period-btn pi-w-17" id="salesPeriodBtn" type="button">Period</button>
             </div>
           </div>
@@ -872,6 +872,6 @@
     <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
   </div>
   <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
-  <script src="js/app.bundle.js?v=192" defer></script>
+  <script src="js/app.bundle.js?v=193" defer></script>
 </body>
 </html>
