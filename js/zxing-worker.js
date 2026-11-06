@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=189");
+importScripts("capture-frame-worker.js?v=190");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -650,19 +650,49 @@ function restoreErasedEanBar(bits, start, width) {
   return text;
 }
 
-function readEanGuardRow(edges, deadline) {
+const EAN13_RUN_BOUNDARIES = [0, 3, 7, 11, 15, 19, 23, 27, 32, 36, 40, 44, 48, 52, 56, 59];
+
+function decodePerspectiveEanRow(edges, start, pitch) {
+  // Perspective changes the apparent pitch across the label. Measure
+  // each four-run digit separately and require an exact EAN-13 pattern.
+  let bits = "";
+  for (let i = 1; i < EAN13_RUN_BOUNDARIES.length; i++) {
+    const first = EAN13_RUN_BOUNDARIES[i - 1], end = EAN13_RUN_BOUNDARIES[i];
+    const modules = end - first === 4 ? 7 : end - first;
+    const left = edges[start + first];
+    const scale = (edges[start + end] - left) / modules;
+    if (scale < pitch * 0.6 || scale > pitch * 1.5) return "";
+    let previous = 0;
+    for (let run = first; run < end; run++) {
+      const next = Math.round((edges[start + run + 1] - left) / scale);
+      const width = next - previous;
+      if (width < 1 || width > 4) return "";
+      bits += (run % 2 ? "0" : "1").repeat(width);
+      previous = next;
+    }
+  }
+  const modules = [...bits];
+  return decodeEan13Modules(modules, 0)?.text || decodeEan13Modules(modules.reverse(), 0)?.text || "";
+}
+
+function readEanGuardRow(edges, deadline, oblique) {
   // A complete EAN-13 has 59 alternating runs. One erased bar joins
   // its two neighbours, reducing the count to 57. Use the three guards
   // as anchors so each half can have its own scale under perspective.
   for (let i = 1; i + 58 < edges.length; i += 2) {
     if (performance.now() >= deadline) return null;
-    for (const runCount of [59, 57]) {
+    for (const runCount of oblique ? [59] : [59, 57]) {
       const end = i + runCount;
       if (end + 1 >= edges.length) continue;
       const left = edges[i], right = edges[end];
       const pitch = (right - left) / 95;
       if (pitch < 1.5 || left - edges[i - 1] < 4 * pitch ||
           edges[end + 1] - right < 4 * pitch) continue;
+      if (oblique) {
+        const text = decodePerspectiveEanRow(edges, i, pitch);
+        if (text) return { text, left, right, repaired: false };
+        continue;
+      }
       const repaired = runCount === 57;
       for (const middle of repaired ? [25, 27] : [27]) {
         const center = i + middle, rightStart = center + 5;
@@ -699,19 +729,24 @@ function readEanGuardRow(edges, deadline) {
   return null;
 }
 
-function readEanGuardRows(pixels, deadline) {
+function readEanGuardRows(pixels, deadline, slope = 0) {
   const { width, height, data } = pixels;
   const step = Math.max(4, Math.floor(height / 52));
   const middle = Math.floor(height / 2);
   const row = new Uint8Array(width);
+  const offsets = slope ? Int16Array.from(row, (_, x) => Math.round((x - (width - 1) / 2) * slope)) : null;
   let match = null, count = 0, top = height, bottom = 0;
   for (let offset = 0; offset <= middle; offset += step) {
     for (const y of offset ? [middle - offset, middle + offset] : [middle]) {
       if (performance.now() >= deadline) return [];
       if (y >= height) continue;
-      let low = 255, high = 0;
+      let low = 255, high = 0, first = width, end = 0;
       for (let x = 0; x < width; x++) {
-        const value = row[x] = data[(y * width + x) * 4 + 1];
+        const sampleY = y + (offsets ? offsets[x] : 0);
+        if (sampleY < 0 || sampleY >= height) continue;
+        if (first === width) first = x;
+        end = x + 1;
+        const value = row[x] = data[(sampleY * width + x) * 4 + 1];
         low = Math.min(low, value);
         high = Math.max(high, value);
       }
@@ -722,14 +757,14 @@ function readEanGuardRows(pixels, deadline) {
         const threshold = low + (high - low) * level;
         // Treat the first light area as the quiet zone. Cropped or absent
         // quiet zones fail the row check before any repair is attempted.
-        const edges = [0];
+        const edges = [first];
         let dark = false;
-        for (let x = 0; x < width; x++) {
+        for (let x = first; x < end; x++) {
           const next = row[x] <= threshold;
           if (next !== dark) { edges.push(x); dark = next; }
         }
-        edges.push(width);
-        const hit = readEanGuardRow(edges, deadline);
+        edges.push(end);
+        const hit = readEanGuardRow(edges, deadline, slope !== 0);
         if (!hit) continue;
         if (match && (match.text !== hit.text || Math.abs(match.left - hit.left) > width * 0.08 ||
             Math.abs(match.right - hit.right) > width * 0.08)) return [];
@@ -738,14 +773,24 @@ function readEanGuardRows(pixels, deadline) {
         bottom = Math.max(bottom, y);
         if (++count >= 4) {
           const { text, left, right, repaired } = match;
+          const leftY = offsets?.[left] || 0, rightY = offsets?.[right - 1] || 0;
           return [{ isValid: true, text, format: "EAN13", repaired, position: {
-            topLeft: { x: left, y: top }, topRight: { x: right, y: top },
-            bottomRight: { x: right, y: bottom }, bottomLeft: { x: left, y: bottom }
+            topLeft: { x: left, y: top + leftY }, topRight: { x: right, y: top + rightY },
+            bottomRight: { x: right, y: bottom + rightY }, bottomLeft: { x: left, y: bottom + leftY }
           } }];
         }
         break;
       }
     }
+  }
+  return [];
+}
+
+function readObliqueEan(pixels, deadline) {
+  for (const slope of [0.42, -0.42, 0.65, -0.65]) {
+    if (performance.now() >= deadline) break;
+    const result = readEanGuardRows(pixels, Math.min(deadline, performance.now() + 9), slope);
+    if (result.length) return result;
   }
   return [];
 }
@@ -1052,6 +1097,11 @@ async function verifyRetailRegion(pixels, region, options, deadline, expectedTex
       if (matches(anchored)) {
         if (frameDiagnostics) frameDiagnostics.verificationEvidence = anchored.repaired ? "four-restored-lines" : "four-guard-lines";
         return offsetBarcodePositions([anchored], rect);
+      }
+      const [oblique] = readObliqueEan(crop, Math.min(deadline, performance.now() + 24));
+      if (matches(oblique)) {
+        if (frameDiagnostics) frameDiagnostics.verificationEvidence = "four-oblique-lines";
+        return offsetBarcodePositions([oblique], rect);
       }
       const corrected = await readThinBars(crop, options);
       if (corrected.some(matches)) {
@@ -1391,6 +1441,10 @@ self.onmessage = async ({ data }) => {
         if (!results.some(isAcceptedBarcode) && options.formats?.includes("EAN13") && performance.now() < deadline) {
           results = readEanGuardRows(centerBand, Math.min(deadline, performance.now() + 22));
           if (results.length && frameDiagnostics) frameDiagnostics.stage = results[0].repaired ? "erased-ean-bar" : "ean-guard-rows";
+          if (!results.length) {
+            results = readObliqueEan(centerBand, Math.min(deadline, performance.now() + 30));
+            if (results.length && frameDiagnostics) frameDiagnostics.stage = "ean-oblique-rows";
+          }
         }
         if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
           results = await readThinBars(centerBand, dense);
