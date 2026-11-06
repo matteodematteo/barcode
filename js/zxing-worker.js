@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=186");
+importScripts("capture-frame-worker.js?v=189");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -606,7 +606,7 @@ function closestEanDigit(bits, patterns) {
   return tied || bestDistance > 1 ? null : { digit: bestDigit, distance: bestDistance };
 }
 
-function decodeEan13Modules(bits) {
+function decodeEan13Modules(bits, maxDistance = 3) {
   if (bits.length < 95 || bits.slice(0, 3).join("") !== "101" ||
       bits.slice(45, 50).join("") !== "01010" || bits.slice(92, 95).join("") !== "101") return null;
   const left = [], parity = [];
@@ -629,8 +629,125 @@ function decodeEan13Modules(bits) {
   const text = String(first) + left.join("") + right.join("");
   let checksum = 0;
   for (let i = 0; i < 12; i++) checksum += Number(text[i]) * (i % 2 ? 3 : 1);
-  if ((10 - checksum % 10) % 10 !== Number(text[12]) || distance > 3) return null;
+  if ((10 - checksum % 10) % 10 !== Number(text[12]) || distance > maxDistance) return null;
   return { text, distance };
+}
+
+function restoreErasedEanBar(bits, start, width) {
+  // The missing bar must be inside the space, leaving a space on each side.
+  // Require exact digit patterns and reject every ambiguous reconstruction.
+  let text = "";
+  for (let offset = 1; offset < width - 1; offset++) {
+    for (let size = 1; size <= 4 && offset + size < width; size++) {
+      const left = start + offset, right = left + size;
+      const candidate = bits.slice(0, left) + "1".repeat(size) + bits.slice(right);
+      const decoded = decodeEan13Modules(candidate.split(""), 0);
+      if (!decoded) continue;
+      if (text && text !== decoded.text) return "";
+      text = decoded.text;
+    }
+  }
+  return text;
+}
+
+function readEanGuardRow(edges, deadline) {
+  // A complete EAN-13 has 59 alternating runs. One erased bar joins
+  // its two neighbours, reducing the count to 57. Use the three guards
+  // as anchors so each half can have its own scale under perspective.
+  for (let i = 1; i + 58 < edges.length; i += 2) {
+    if (performance.now() >= deadline) return null;
+    for (const runCount of [59, 57]) {
+      const end = i + runCount;
+      if (end + 1 >= edges.length) continue;
+      const left = edges[i], right = edges[end];
+      const pitch = (right - left) / 95;
+      if (pitch < 1.5 || left - edges[i - 1] < 4 * pitch ||
+          edges[end + 1] - right < 4 * pitch) continue;
+      const repaired = runCount === 57;
+      for (const middle of repaired ? [25, 27] : [27]) {
+        const center = i + middle, rightStart = center + 5;
+        const sections = [
+          [i, center, 45], [center, rightStart, 5], [rightStart, end, 45]
+        ];
+        let bits = "", gapStart = -1, gapWidth = 0;
+        for (const [first, last, modules] of sections) {
+          const scale = (edges[last] - edges[first]) / modules;
+          if (Math.abs(scale / pitch - 1) > 0.25) break;
+          let previous = 0;
+          for (let j = first; j < last; j++) {
+            const next = Math.round((edges[j + 1] - edges[first]) / scale);
+            const width = next - previous, dark = (j - i) % 2 === 0;
+            if (width < 1 || width > 12) break;
+            if (width > 4) {
+              if (!repaired || dark || gapStart >= 0) break;
+              gapStart = bits.length;
+              gapWidth = width;
+            }
+            bits += (dark ? "1" : "0").repeat(width);
+            previous = next;
+          }
+          if (previous !== modules) break;
+        }
+        if (bits.length !== 95 ||
+            !bits.startsWith("101") || bits.slice(45, 50) !== "01010" || !bits.endsWith("101")) continue;
+        if (repaired && (gapStart < 3 || gapStart + gapWidth > 92)) continue;
+        const text = repaired ? restoreErasedEanBar(bits, gapStart, gapWidth) : decodeEan13Modules([...bits], 0)?.text;
+        if (text) return { text, left, right, repaired };
+      }
+    }
+  }
+  return null;
+}
+
+function readEanGuardRows(pixels, deadline) {
+  const { width, height, data } = pixels;
+  const step = Math.max(4, Math.floor(height / 52));
+  const middle = Math.floor(height / 2);
+  const row = new Uint8Array(width);
+  let match = null, count = 0, top = height, bottom = 0;
+  for (let offset = 0; offset <= middle; offset += step) {
+    for (const y of offset ? [middle - offset, middle + offset] : [middle]) {
+      if (performance.now() >= deadline) return [];
+      if (y >= height) continue;
+      let low = 255, high = 0;
+      for (let x = 0; x < width; x++) {
+        const value = row[x] = data[(y * width + x) * 4 + 1];
+        low = Math.min(low, value);
+        high = Math.max(high, value);
+      }
+      if (high - low < 72) continue;
+      // Lower thresholds separate tightly printed dark bars whose narrow
+      // spaces are much darker than the surrounding paper.
+      for (const level of [0.5, 0.38, 0.33, 0.28, 0.25, 0.2, 0.64]) {
+        const threshold = low + (high - low) * level;
+        // Treat the first light area as the quiet zone. Cropped or absent
+        // quiet zones fail the row check before any repair is attempted.
+        const edges = [0];
+        let dark = false;
+        for (let x = 0; x < width; x++) {
+          const next = row[x] <= threshold;
+          if (next !== dark) { edges.push(x); dark = next; }
+        }
+        edges.push(width);
+        const hit = readEanGuardRow(edges, deadline);
+        if (!hit) continue;
+        if (match && (match.text !== hit.text || Math.abs(match.left - hit.left) > width * 0.08 ||
+            Math.abs(match.right - hit.right) > width * 0.08)) return [];
+        match ||= hit;
+        top = Math.min(top, y);
+        bottom = Math.max(bottom, y);
+        if (++count >= 4) {
+          const { text, left, right, repaired } = match;
+          return [{ isValid: true, text, format: "EAN13", repaired, position: {
+            topLeft: { x: left, y: top }, topRight: { x: right, y: top },
+            bottomRight: { x: right, y: bottom }, bottomLeft: { x: left, y: bottom }
+          } }];
+        }
+        break;
+      }
+    }
+  }
+  return [];
 }
 
 // Recover faint EAN-13s directly from the module guards when a photographic
@@ -931,6 +1048,11 @@ async function verifyRetailRegion(pixels, region, options, deadline, expectedTex
       return offsetBarcodePositions(strong.filter(matches), rect);
     }
     if (!weakReads.length && expectedFormat === "EAN13" && performance.now() < deadline) {
+      const [anchored] = readEanGuardRows(crop, Math.min(deadline, performance.now() + 22));
+      if (matches(anchored)) {
+        if (frameDiagnostics) frameDiagnostics.verificationEvidence = anchored.repaired ? "four-restored-lines" : "four-guard-lines";
+        return offsetBarcodePositions([anchored], rect);
+      }
       const corrected = await readThinBars(crop, options);
       if (corrected.some(matches)) {
         if (frameDiagnostics) frameDiagnostics.verificationEvidence = "four-corrected-lines";
@@ -1266,6 +1388,10 @@ self.onmessage = async ({ data }) => {
         centerBand = cropBarcodePixels(pixels, { x: 0, y: bandY, width: pixels.width,
           height: Math.ceil(pixels.height * 0.3) });
         results = await readDiagnosticBarcodes(centerBand, dense);
+        if (!results.some(isAcceptedBarcode) && options.formats?.includes("EAN13") && performance.now() < deadline) {
+          results = readEanGuardRows(centerBand, Math.min(deadline, performance.now() + 22));
+          if (results.length && frameDiagnostics) frameDiagnostics.stage = results[0].repaired ? "erased-ean-bar" : "ean-guard-rows";
+        }
         if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
           results = await readThinBars(centerBand, dense);
         }

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f5f6f2" />
-  <meta name="webscanner-version" content="186" />
+  <meta name="webscanner-version" content="189" />
   <script>
     // Keep update discovery independent of the cached application bundle.
     // The worker URL stays stable; its own update checks bypass HTTP caching.
@@ -32,15 +32,15 @@
         navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
       const manifest = document.createElement("link");
       manifest.rel = "manifest";
-      manifest.href = isIOS ? "manifest.ios.webmanifest?v=186" : "manifest.webmanifest?v=186";
+      manifest.href = isIOS ? "manifest.ios.webmanifest?v=189" : "manifest.webmanifest?v=189";
       document.head.appendChild(manifest);
     })();
   </script>
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=186" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=186" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=189" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=189" />
   <title>Web Barcode Scanner</title>
-  <link rel="preload" href="js/app.bundle.js?v=186" as="script" />
-  <link rel="preload" href="css/interface.bundle.css?v=186" as="style" />
+  <link rel="preload" href="js/app.bundle.js?v=189" as="script" />
+  <link rel="preload" href="css/interface.bundle.css?v=189" as="style" />
   <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
        round-trips for the above-the-fold shell (base + scanner + layout +
        essential components). The remaining interface styles load as one small sheet below. -->
@@ -381,13 +381,13 @@
   <!-- These sheets affect the visible page geometry. Keep them render-blocking so
        browsers paint the completed interface once instead of restyling sections
        progressively on a slow connection. -->
-  <link rel="stylesheet" href="css/interface.bundle.css?v=186" />
+  <link rel="stylesheet" href="css/interface.bundle.css?v=189" />
 </head>
 <body>
   <main class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=186" width="34" height="34" alt="" decoding="async" /></span>
+        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=189" width="34" height="34" alt="" decoding="async" /></span>
         <div><h1>Web Scanner</h1></div>
       </div>
       <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
@@ -414,7 +414,7 @@
       <div class="section-heading"><h2>Product</h2></div>
       <div class="controls">
         <div class="lookup-row">
-          <input class="input" id="barcodeInput" type="text" inputmode="numeric" autocomplete="off" placeholder="Enter barcode" aria-label="Barcode" value="" />
+          <input class="input" id="barcodeInput" type="text" autocomplete="off" placeholder="Barcode or keyword" aria-label="Barcode or product keyword" value="" />
           <button class="btn btn-muted" id="searchBarcodeBtn" type="button">Search</button>
           <button class="btn btn-muted" id="clearBarcodeBtn" type="button">Clear</button>
         </div>
@@ -530,10 +530,19 @@
         <button class="btn btn-primary" id="printBtn" type="button">Print</button>
         <div class="history-details-control"><label class="history-details-label" for="historyDetailsSwitch">+ More</label><button class="btn btn-muted history-details-switch" id="historyDetailsSwitch" type="button" role="switch" aria-checked="false" aria-label="Show cost and supplier in history" title="Show cost and supplier in history"><span class="history-details-switch-track" aria-hidden="true"><span class="history-details-switch-thumb"></span></span></button></div>
       </div>
-      <nav class="capture-actions" aria-label="Capture controls">
+      <nav class="capture-actions" id="captureActions" aria-label="Capture controls">
+        <button class="btn btn-muted capture-search-icon" id="historySearchBtn" type="button" aria-label="Search capture list" aria-controls="historySearch">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg>
+        </button>
         <button class="btn btn-muted" id="entryModeBtn" type="button" aria-label="mode: Classic" title="Switch to Quantity mode" aria-pressed="false"><span id="entryModeLabel">mode: Classic</span></button>
         <button class="btn btn-primary" id="scanBtn" type="button" data-mode="start">Capture barcode</button>
       </nav>
+      <div class="capture-search" id="historySearch" role="search" aria-label="Capture List" hidden>
+        <input class="input" id="historySearchInput" type="text" inputmode="search" autocomplete="off" aria-label="Search capture list" aria-controls="historyList" placeholder="Search capture list" />
+        <button class="btn btn-muted capture-search-icon" id="historySearchCloseBtn" type="button" aria-label="Close search">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
       <div class="history-list" id="historyList" aria-live="polite">
         <p class="history-empty" id="historyEmpty">No scans yet.</p>
       </div>
@@ -795,7 +804,7 @@
 
   <div class="dialog-backdrop" id="closestSearchDialog" aria-hidden="true">
     <div class="dialog-card closest-search-dialog-card" role="dialog" aria-modal="true" aria-labelledby="closestSearchTitle">
-      <h2 id="closestSearchTitle">Closest Matches</h2>
+      <h2 id="closestSearchTitle">Product Search</h2>
       <div class="closest-search-progress" id="closestSearchProgress" role="status" aria-live="polite" hidden>
         <span class="closest-search-loader" aria-hidden="true"></span>
         <span>Waiting for response...</span>
@@ -862,6 +871,6 @@
     <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
   </div>
   <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
-  <script src="js/app.bundle.js?v=186" defer></script>
+  <script src="js/app.bundle.js?v=189" defer></script>
 </body>
 </html>
