@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=198");
+importScripts("capture-frame-worker.js?v=199");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -249,7 +249,7 @@ function findColourLabelRegions(pixels) {
 
 // Scan native-resolution rows for dense alternating edges. Tiny/short bars
 // are located independently of brighter packaging text or shelf outlines.
-function findBarcodeStrips(pixels) {
+function findBarcodeStrips(pixels, minGradient = 3) {
   checkDecodeBudget();
   const { width, height, data } = pixels;
   const step = 4, groups = [];
@@ -284,7 +284,7 @@ function findBarcodeStrips(pixels) {
       if ((x & 255) === 0) checkDecodeBudget();
       // Green preserves chromatic bar contrast on yellow/red shelf labels.
       const gradient = data[row + (x + 1) * 4 + 1] - data[row + (x - 1) * 4 + 1];
-      const sign = gradient >= 3 ? 1 : gradient <= -3 ? -1 : 0;
+      const sign = gradient >= minGradient ? 1 : gradient <= -minGradient ? -1 : 0;
       if (sign && sign === previousSign) {
         if (Math.abs(gradient) > strongest) { strongest = Math.abs(gradient); peakX = x; }
       } else {
@@ -696,6 +696,120 @@ function readCurvedEanRows(pixels, deadline) {
   }
   return [];
 }
+
+// Dense printing can leave narrow spaces too dark for a whole-image threshold.
+// Compare measured module intensities with each digit independently. Guard,
+// parity, checksum, contrast, winner margin and four separated scan rows must
+// all agree. The checksum never repairs a digit or selects a runner-up.
+function readAnalogEanRows(pixels, deadline) {
+  const { width, height, data } = pixels;
+  const patterns = [...EAN13_L, ...EAN13_G, ...EAN13_R].map(bits => {
+    const mean = [...bits].reduce((sum, bit) => sum + Number(bit), 0) / 7;
+    const norm = Math.sqrt(7 * mean * (1 - mean));
+    return [...bits].map(bit => (Number(bit) - mean) / norm);
+  });
+  const correlate = (samples, offset, pattern) => {
+    let sum = 0, squared = 0, dot = 0;
+    for (let i = 0; i < pattern.length; i++) {
+      const value = samples[offset + i];
+      sum += value; squared += value * value; dot += value * pattern[i];
+    }
+    const norm = Math.sqrt(Math.max(0, squared - sum * sum / pattern.length));
+    return norm > 5 ? dot / norm : -1;
+  };
+  const guard3 = [1, -2, 1].map(value => value / Math.sqrt(6));
+  const guard5 = [-2, 3, -2, 3, -2].map(value => value / Math.sqrt(30));
+  const row = new Float32Array(width), samples = new Float32Array(95);
+  const votes = new Map();
+  const step = Math.max(2, Math.floor(height / 40)), middle = Math.floor(height / 2);
+  for (let k = 0; k < 40; k++) {
+    if (performance.now() >= deadline) break;
+    const y = middle + (k % 2 ? -1 : 1) * Math.ceil(k / 2) * step;
+    if (y < 0 || y >= height) continue;
+    let low = 255, high = 0;
+    for (let x = 0; x < width; x++) {
+      if ((x & 255) === 0) checkDecodeBudget();
+      const value = data[(y * width + x) * 4 + 1];
+      row[x] = 255 - value;
+      low = Math.min(low, value); high = Math.max(high, value);
+    }
+    if (high - low < 45) continue;
+    const threshold = 255 - (low + (high - low) * 0.35), starts = [], ends = [];
+    let dark = false, last = 0;
+    for (let x = 0; x <= width; x++) {
+      const next = x < width && row[x] > threshold;
+      if (next === dark) continue;
+      if (next && x - last >= 6) starts.push({ x, before: x - last });
+      if (!next) ends.push({ x, after: width });
+      if (next && ends.length) ends.at(-1).after = x;
+      last = x; dark = next;
+    }
+    const candidates = new Map();
+    for (const anchor of starts) for (const end of ends) {
+      const span = end.x - anchor.x, quiet = 1.25 * span / 95;
+      // Tight packaging margins are tolerated, but both quiet zones and all
+      // three measured guards remain mandatory.
+      if (span < 133 || span > width || anchor.before < quiet || end.after - end.x < quiet) continue;
+      for (const shift of [-1, -0.5, 0, 0.5, 1]) for (const stretch of [-1, 0, 1]) {
+        if (performance.now() >= deadline) return [];
+        const left = anchor.x + shift, unit = (span + stretch) / 95;
+        if (left < 0 || left + 95 * unit >= width) continue;
+        const sample = i => {
+          const x = left + (i + 0.5) * unit, at = Math.floor(x);
+          samples[i] = row[at] + (row[at + 1] - row[at]) * (x - at);
+        };
+        // Reject unrelated stripes using only the eleven guard modules.
+        for (const i of [0, 1, 2, 45, 46, 47, 48, 49, 92, 93, 94]) sample(i);
+        const guards = [correlate(samples, 0, guard3), correlate(samples, 45, guard5),
+          correlate(samples, 92, guard3)];
+        if (guards.some(score => score < 0.8)) continue;
+        for (let i = 3; i < 92; i++) sample(i);
+        let digits = "", parity = "", score = 0;
+        for (let i = 0; i < 12; i++) {
+          const right = i >= 6, offset = right ? 50 + (i - 6) * 7 : 3 + i * 7;
+          let best = -Infinity, next = -Infinity, chosen = -1;
+          for (let j = right ? 20 : 0; j < (right ? 30 : 20); j++) {
+            const value = correlate(samples, offset, patterns[j]);
+            if (value > best) { next = best; best = value; chosen = j; }
+            else if (value > next) next = value;
+          }
+          if (best < 0.75 || best - next < 0.02) break;
+          score += best; digits += chosen % 10;
+          if (!right) parity += chosen < 10 ? "L" : "G";
+        }
+        const prefix = EAN13_PARITY.indexOf(parity);
+        if (digits.length !== 12 || prefix < 0 || score / 12 < 0.9) continue;
+        const text = String(prefix) + digits;
+        const quality = (score + guards.reduce((sum, value) => sum + value, 0)) / 15;
+        if (!candidates.has(text) || candidates.get(text).quality < quality) {
+          candidates.set(text, { text, quality, left, right: left + 95 * unit });
+        }
+      }
+    }
+    // Choose geometry and digits from image evidence BEFORE checking the
+    // checksum. A lower-quality, checksum-valid alignment cannot repair a
+    // better-fitting invalid barcode or resolve an ambiguous row.
+    const ranked = [...candidates.values()].sort((a, b) => b.quality - a.quality);
+    const hit = ranked[0];
+    if (!hit || ranked[1] && hit.quality - ranked[1].quality < 0.015) continue;
+    if ([...hit.text].reduce((sum, digit, i) => sum + Number(digit) * (i % 2 ? 3 : 1), 0) % 10) continue;
+    let vote = votes.get(hit.text);
+    if (!vote) {
+      vote = { ...hit, ys: new Set(), top: y, bottom: y };
+      votes.set(hit.text, vote);
+    }
+    vote.ys.add(y); vote.top = Math.min(vote.top, y); vote.bottom = Math.max(vote.bottom, y);
+    if (votes.size > 1) return [];
+    if (vote.ys.size >= 4 && vote.bottom - vote.top >= 8) {
+      return [{ isValid: true, format: "EAN13", text: hit.text, analog: true, position: {
+        topLeft: { x: vote.left, y: vote.top }, topRight: { x: vote.right, y: vote.top },
+        bottomRight: { x: vote.right, y: vote.bottom }, bottomLeft: { x: vote.left, y: vote.bottom }
+      } }];
+    }
+  }
+  return [];
+}
+
 
 function closestEanDigit(bits, patterns) {
   let bestDigit = -1, bestDistance = 8, tied = false;
@@ -1206,6 +1320,14 @@ async function verifyRetailRegion(pixels, region, options, deadline, expectedTex
       if (frameDiagnostics) frameDiagnostics.verificationEvidence = "four-lines";
       return offsetBarcodePositions(strong.filter(matches), rect);
     }
+    if (expectedFormat === "EAN13" && performance.now() < deadline) {
+      const scaled = await readDiagnosticBarcodes(crop, { ...options, formats: ["EAN13"],
+        minLineCount: 4, tryDownscale: true, binarizer: "FixedThreshold" });
+      if (scaled.some(matches)) {
+        if (frameDiagnostics) frameDiagnostics.verificationEvidence = "four-multiscale-lines";
+        return offsetBarcodePositions(scaled.filter(matches), rect);
+      }
+    }
     if (!weakReads.length && expectedFormat === "EAN13" && performance.now() < deadline) {
       let [anchored] = readEanGuardRows(crop, Math.min(deadline, performance.now() + 12));
       if (!anchored) [anchored] = readCurvedEanRows(crop, Math.min(deadline, performance.now() + 32));
@@ -1449,6 +1571,46 @@ self.onmessage = async ({ data }) => {
       if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
         if (frameDiagnostics) frameDiagnostics.stage = "full-frame-quick";
         results = await readDiagnosticBarcodes(pixels, quick);
+      }
+      if (!results.some(isAcceptedBarcode) && options.formats?.includes("EAN13") &&
+          performance.now() < deadline && data.analogVerification && data.verificationRegion) {
+        const region = data.verificationRegion;
+        if ([region.x, region.y, region.width, region.height].every(Number.isFinite) &&
+            region.width > 0 && region.height > 0) {
+          const px = Math.max(20, region.width * 0.14), py = Math.max(28, region.height * 0.65);
+          const x = Math.max(0, Math.floor(region.x - px)), y = Math.max(0, Math.floor(region.y - py));
+          const rect = { x, y,
+            width: Math.min(pixels.width, Math.ceil(region.x + region.width + px)) - x,
+            height: Math.min(pixels.height, Math.ceil(region.y + region.height + py)) - y };
+          if (rect.width > 0 && rect.height > 0) {
+            if (frameDiagnostics) frameDiagnostics.stage = "ean-analog-verification";
+            const hits = readAnalogEanRows(cropBarcodePixels(pixels, rect), deadline)
+              .filter(result => result.text === data.verificationCode);
+            results = offsetBarcodePositions(hits, rect);
+          }
+        }
+      }
+      if (!results.some(isAcceptedBarcode) && !data.verificationCode &&
+          options.formats?.includes("EAN13") && performance.now() < deadline) {
+        // Ignore fine package texture here; retain the sensitive locator later
+        // for faint labels. Find and read real bars before costly curve fitting.
+        if (frameDiagnostics) frameDiagnostics.stage = "strong-retail-strips";
+        const strips = findBarcodeStrips(pixels, 14).filter(rect =>
+          rect.edges >= 40 && rect.edges <= 100 && rect.core.height >= 12);
+        for (const rect of strips.slice(0, 2)) {
+          if (performance.now() >= deadline) break;
+          const crop = cropBarcodePixels(pixels, rect);
+          results = await readDiagnosticBarcodes(crop, { ...dense, formats: ["EAN13"],
+            minLineCount: Math.max(4, options.minLineCount), tryInvert: false,
+            tryDownscale: true, binarizer: "FixedThreshold" });
+          if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+            results = readAnalogEanRows(crop, Math.min(deadline, performance.now() + 45));
+          }
+          if (results.some(isAcceptedBarcode)) {
+            results = offsetBarcodePositions(results, rect);
+            break;
+          }
+        }
       }
       if (curvedEanEnabled && !results.some(isAcceptedBarcode) && !data.verificationCode && options.formats?.includes("EAN13") &&
           performance.now() < deadline) {
@@ -1875,7 +2037,7 @@ self.onmessage = async ({ data }) => {
       diagnostics.decodedRegion = decodedRegion;
       diagnostics.readsTruncated = diagnostics.wasmCalls > diagnostics.reads.length;
     }
-    self.postMessage({ id: data.id, text, format: result?.format || "", curved: Boolean(result?.curved), corners, region: decodedRegion, diagnostics });
+    self.postMessage({ id: data.id, text, format: result?.format || "", curved: Boolean(result?.curved), analog: Boolean(result?.analog), corners, region: decodedRegion, diagnostics });
   } catch (error) {
     if (error === decodeBudgetExhausted) {
       if (frameDiagnostics) frameDiagnostics.preprocessingBudgetExhausted = true;

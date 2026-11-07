@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f5f6f2" />
-  <meta name="webscanner-version" content="198" />
+  <meta name="webscanner-version" content="199" />
   <script>
     // Keep update discovery independent of the cached application bundle.
     // The worker URL stays stable; its own update checks bypass HTTP caching.
@@ -32,15 +32,15 @@
         navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
       const manifest = document.createElement("link");
       manifest.rel = "manifest";
-      manifest.href = isIOS ? "manifest.ios.webmanifest?v=198" : "manifest.webmanifest?v=198";
+      manifest.href = isIOS ? "manifest.ios.webmanifest?v=199" : "manifest.webmanifest?v=199";
       document.head.appendChild(manifest);
     })();
   </script>
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=198" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=198" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=199" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=199" />
   <title>Web Barcode Scanner</title>
-  <link rel="preload" href="js/app.bundle.js?v=198" as="script" />
-  <link rel="preload" href="css/interface.bundle.css?v=198" as="style" />
+  <link rel="preload" href="js/app.bundle.js?v=199" as="script" />
+  <link rel="preload" href="css/interface.bundle.css?v=199" as="style" />
   <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
        round-trips for the above-the-fold shell (base + scanner + layout +
        essential components). The remaining interface styles load as one small sheet below. -->
@@ -381,13 +381,13 @@
   <!-- These sheets affect the visible page geometry. Keep them render-blocking so
        browsers paint the completed interface once instead of restyling sections
        progressively on a slow connection. -->
-  <link rel="stylesheet" href="css/interface.bundle.css?v=198" />
+  <link rel="stylesheet" href="css/interface.bundle.css?v=199" />
 </head>
 <body>
   <main class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=198" width="34" height="34" alt="" decoding="async" /></span>
+        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=199" width="34" height="34" alt="" decoding="async" /></span>
         <div><h1>Web Scanner</h1></div>
       </div>
       <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
@@ -743,13 +743,18 @@
         <input id="printTimestampCheckbox" type="checkbox" checked />
         <span>Timestamp</span>
       </label>
-      <div class="dialog-actions compact-print-actions">
-        <button class="btn btn-primary" id="printBigBtn" type="button">[BIG] 60*38</button>
-        <button class="btn btn-primary" id="printStickerBtn" type="button">[STICKER] 40*25</button>
-        <button class="btn btn-primary" id="sendTxtBtn" type="button">Send TXT</button>
-        <button class="btn btn-primary" id="namedUniqueBtn" type="button">Named/Unique</button>
-        <button class="btn btn-muted" id="printBackBtn" type="button">Back</button>
+      <div class="format-section-title">Print labels</div>
+      <div class="format-grid">
+        <button class="format-tile label-big" id="printBigBtn" type="button"><svg viewBox="0 0 32 28" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="28" height="20" rx="3"/><path d="M7 8h12M7 12h8M7 17h1m3 0h1m3 0h1m3 0h1m3 0h1"/></svg><span class="tile-eyebrow">BIG LABEL</span><span class="tile-size">60 × 38 <small>mm</small></span></button>
+        <button class="format-tile label-sticker" id="printStickerBtn" type="button"><svg viewBox="0 0 32 28" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="20" height="15" rx="3"/><path d="M10 10h8m-8 4v3m3-3v3m3-3v3m3-3v3m3-3v3"/></svg><span class="tile-eyebrow">STICKER</span><span class="tile-size">40 × 25 <small>mm</small></span></button>
       </div>
+      <div class="format-section-title export-heading">TXT exports</div>
+      <div class="format-grid">
+        <button class="format-tile export-tile" id="sendTxtBtn" type="button"><svg viewBox="0 0 32 28" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2h10l6 6v17H9zM19 2v7h6M13 14h8m-8 4h8m-8 4h5"/></svg><span class="tile-title">Send TXT</span><span class="tile-description">Full barcode list</span></button>
+        <button class="format-tile export-tile" id="namedUniqueBtn" type="button"><svg viewBox="0 0 32 28" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 5h13v18H7zM12 2h13v16M11 14l3 3 5-6"/></svg><span class="tile-title">Named/Unique</span><span class="tile-description">Name & combine repeats</span></button>
+      </div>
+      <button class="btn btn-muted print-back" id="printBackBtn" type="button">Back</button>
+
       <section class="print-request-section" aria-labelledby="printRequestHistoryTitle">
         <h3 id="printRequestHistoryTitle">Recent print requests</h3>
         <div id="printRequestHistoryList" class="print-request-list" aria-live="polite"></div>
@@ -892,6 +897,6 @@
     <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
   </div>
   <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
-  <script src="js/app.bundle.js?v=198" defer></script>
+  <script src="js/app.bundle.js?v=199" defer></script>
 </body>
 </html>
