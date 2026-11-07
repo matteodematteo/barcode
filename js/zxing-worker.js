@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=193");
+importScripts("capture-frame-worker.js?v=194");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -558,6 +558,9 @@ async function readBarcodeStrip(pixels, rect, options, deadline) {
   // inversion for the enlarged retry, where they are most useful.
   const candidateOptions = { ...options, tryHarder: false, tryDownscale: false, minLineCount: 1 };
   let results = await readDiagnosticBarcodes(crop, candidateOptions);
+  if (!results.some(isAcceptedBarcode) && options.formats?.includes("EAN13") && performance.now() < deadline) {
+    results = readCurvedEanRows(crop, Math.min(deadline, performance.now() + 14));
+  }
   if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
     const normalized = normalizeBarcodePixels(crop, 1, rect.core);
     if (normalized && performance.now() < deadline) results = await readDiagnosticBarcodes(normalized, candidateOptions);
@@ -594,6 +597,105 @@ const EAN13_G = ["0100111", "0110011", "0011011", "0100001", "0011101",
 const EAN13_R = EAN13_L.map((pattern) => [...pattern].map((bit) => bit === "0" ? "1" : "0").join(""));
 const EAN13_PARITY = ["LLLLLL", "LLGLGG", "LLGGLG", "LLGGGL", "LGLLGG",
   "LGGLLG", "LGGGLL", "LGLGLG", "LGLGGL", "LGGLGL"];
+
+const EAN_RUN_PATTERNS = [...EAN13_L, ...EAN13_G].map(pattern => pattern.match(/0+|1+/g).map(run => run.length));
+
+function readCurvedEanRow(bits, y, distances) {
+  const edges = [0];
+  for (let x = 1; x < bits.length; x++) if (bits[x] !== bits[x - 1]) {
+    // Interpolate crossings rather than rounding a three-pixel module to
+    // whole pixels. This tolerates video colour conversion without guessing digits.
+    const before = distances?.[x - 1], after = distances?.[x];
+    edges.push(Number.isFinite(before) && Number.isFinite(after) && before !== after
+      ? x - 1 + before / (before - after) : x);
+  }
+  edges.push(bits.length);
+  let match = null;
+  for (let start = 1; start < edges.length - 60; start++) {
+    if ((bits[0] === 1) !== (start % 2 === 0)) continue;
+    const pitch = (edges[start + 59] - edges[start]) / 95;
+    if (pitch < 1.4 || edges[start] - edges[start - 1] < 3 * pitch ||
+        edges[start + 60] - edges[start + 59] < 3 * pitch) continue;
+    const widths = Array.from({ length: 59 }, (_, i) => edges[start + i + 1] - edges[start + i]);
+    if ([0, 1, 2, 27, 28, 29, 30, 31, 56, 57, 58].some(i => widths[i] < .2 * pitch || widths[i] > 2.3 * pitch)) continue;
+    let digits = "", parity = "", totalCost = 0;
+    for (let i = 0; i < 12; i++) {
+      const right = i >= 6, offset = right ? 32 + (i - 6) * 4 : 3 + i * 4;
+      const scale = widths.slice(offset, offset + 4).reduce((a, b) => a + b, 0) / 7;
+      if (scale < pitch * .6 || scale > pitch * 1.5) break;
+      let best = Infinity, next = Infinity, code = -1;
+      for (let candidate = 0; candidate < (right ? 10 : 20); candidate++) {
+        const delta = EAN_RUN_PATTERNS[candidate].map((width, j) => widths[offset + j] / scale - width);
+        const sign = j => (j % 2 === 0) === right ? 1 : -1;
+        const bias = Math.max(-.25, Math.min(.25, delta.reduce((sum, value, j) => sum + value * sign(j), 0) / 4));
+        const cost = delta.reduce((sum, value, j) => sum + (value - bias * sign(j)) ** 2 / 4, 0);
+        if (cost < best) { next = best; best = cost; code = candidate; }
+        else if (cost < next) next = cost;
+      }
+      if (best >= .32 || next - best <= .01) break;
+      totalCost += best;
+      digits += String(code % 10);
+      if (!right) parity += code < 10 ? "L" : "G";
+    }
+    const first = EAN13_PARITY.indexOf(parity);
+    if (digits.length !== 12 || first < 0 || totalCost / 12 > .08) continue;
+    const text = String(first) + digits;
+    const sum = [...text.slice(0, 12)].reduce((sum, digit, i) => sum + Number(digit) * (i % 2 ? 3 : 1), 0);
+    if ((10 - sum % 10) % 10 !== Number(text[12])) continue;
+    if (match && match.text !== text) return null;
+    match = { text, left: edges[start], right: edges[start + 59], y };
+  }
+  return match;
+}
+
+let curvedEanRowPhase = 0;
+let curvedEanEnabled = true;
+function readCurvedEanRows(pixels, deadline) {
+  if (!curvedEanEnabled) return [];
+  const { width, height, data } = pixels;
+  const values = new Float32Array(width), low = new Float32Array(width), high = new Float32Array(width);
+  const bits = new Uint8Array(width);
+  const distances = new Float32Array(width);
+  const step = Math.max(1, Math.floor(height / 96)), middle = Math.floor(height / 2) + Math.floor(curvedEanRowPhase++ / 3) % step;
+  for (let index = 0; index < Math.ceil(height / step); index++) {
+    const y = middle + (index % 2 ? -1 : 1) * Math.ceil(index / 2) * step;
+    if (y < 0 || y >= height) continue;
+    if (performance.now() >= deadline) return [];
+    for (let x = 0; x < width; x++) {
+      const at = x => { const p = (y * width + x) * 4; return (data[p] * 77 + data[p + 1] * 150 + data[p + 2] * 29) / 256; };
+      values[x] = (at(Math.max(0, x - 1)) + 2 * at(x) + at(Math.min(width - 1, x + 1))) / 4;
+    }
+    for (const radius of [width, 32, 64]) {
+      // Sliding extrema keep the per-row work linear even for a wide preview.
+      const minQueue = [], maxQueue = [];
+      let minHead = 0, maxHead = 0, added = 0;
+      for (let x = 0; x < width; x++) {
+        const end = Math.min(width - 1, x + radius);
+        while (added <= end) {
+          while (minQueue.length > minHead && values[minQueue.at(-1)] >= values[added]) minQueue.pop();
+          while (maxQueue.length > maxHead && values[maxQueue.at(-1)] <= values[added]) maxQueue.pop();
+          minQueue.push(added); maxQueue.push(added++);
+        }
+        while (minQueue[minHead] < x - radius) minHead++;
+        while (maxQueue[maxHead] < x - radius) maxHead++;
+        low[x] = values[minQueue[minHead]]; high[x] = values[maxQueue[maxHead]];
+      }
+      for (const fraction of [.5, .4, .6, .45, .55, .65, .35, .3, .7]) {
+        if (performance.now() >= deadline) return [];
+        for (let x = 0; x < width; x++) {
+          distances[x] = values[x] - low[x] - (high[x] - low[x]) * fraction;
+          bits[x] = high[x] - low[x] >= 5 && distances[x] < 0 ? 1 : 0;
+        }
+        const hit = readCurvedEanRow(bits, y, distances) || readCurvedEanRow(bits, y);
+        if (hit) return [{ isValid: true, text: hit.text, format: "EAN13", curved: true, position: {
+          topLeft: { x: hit.left, y: Math.max(0, y - 2) }, topRight: { x: hit.right, y: Math.max(0, y - 2) },
+          bottomRight: { x: hit.right, y: Math.min(height, y + 2) }, bottomLeft: { x: hit.left, y: Math.min(height, y + 2) }
+        } }];
+      }
+    }
+  }
+  return [];
+}
 
 function closestEanDigit(bits, patterns) {
   let bestDigit = -1, bestDistance = 8, tied = false;
@@ -1087,15 +1189,29 @@ async function verifyRetailRegion(pixels, region, options, deadline, expectedTex
     if (firstCrop && ["x", "y", "width", "height"].every(key => firstCrop.rect[key] === rect[key])) continue;
     const crop = cropBarcodePixels(pixels, rect);
     firstCrop ||= { crop, rect };
+    if (expectedFormat === "EAN13" && expectedText) {
+      const guarded = readEanGuardRows(crop, Math.min(deadline, performance.now() + 12)).filter(matches);
+      if (guarded.length) {
+        if (frameDiagnostics) frameDiagnostics.verificationEvidence = guarded[0].repaired ? "four-restored-lines" : "four-guard-lines";
+        return offsetBarcodePositions(guarded, rect);
+      }
+      const curved = readCurvedEanRows(crop, Math.min(deadline, performance.now() + 35)).filter(matches);
+      if (curved.length) {
+        if (frameDiagnostics) frameDiagnostics.verificationEvidence = "guarded-digit-fit";
+        return offsetBarcodePositions(curved, rect);
+      }
+    }
     const strong = await readDiagnosticBarcodes(crop, { ...options, minLineCount: Math.max(4, options.minLineCount || 2) });
     if (strong.some(matches)) {
       if (frameDiagnostics) frameDiagnostics.verificationEvidence = "four-lines";
       return offsetBarcodePositions(strong.filter(matches), rect);
     }
     if (!weakReads.length && expectedFormat === "EAN13" && performance.now() < deadline) {
-      const [anchored] = readEanGuardRows(crop, Math.min(deadline, performance.now() + 22));
+      let [anchored] = readEanGuardRows(crop, Math.min(deadline, performance.now() + 12));
+      if (!anchored) [anchored] = readCurvedEanRows(crop, Math.min(deadline, performance.now() + 32));
       if (matches(anchored)) {
-        if (frameDiagnostics) frameDiagnostics.verificationEvidence = anchored.repaired ? "four-restored-lines" : "four-guard-lines";
+        if (frameDiagnostics) frameDiagnostics.verificationEvidence = anchored.curved ? "guarded-digit-fit"
+          : anchored.repaired ? "four-restored-lines" : "four-guard-lines";
         return offsetBarcodePositions([anchored], rect);
       }
       const [oblique] = readObliqueEan(crop, Math.min(deadline, performance.now() + 24));
@@ -1268,6 +1384,8 @@ self.onmessage = async ({ data }) => {
     return;
   }
   const started = performance.now();
+  curvedEanEnabled = data.verificationCode ? Boolean(data.curvedVerification)
+    : Math.floor(Math.abs(data.regionOffset || 0) / 4) % 2 === 0;
   frameDiagnostics = data.diagnostics ? { wasmCalls: 0, wasmMs: 0, maxWasmReadMs: 0,
     rejectedResults: 0, reads: [], stage: "initial" } : null;
   const measurements = () => frameDiagnostics ? { ...frameDiagnostics,
@@ -1331,6 +1449,30 @@ self.onmessage = async ({ data }) => {
       if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
         if (frameDiagnostics) frameDiagnostics.stage = "full-frame-quick";
         results = await readDiagnosticBarcodes(pixels, quick);
+      }
+      if (curvedEanEnabled && !results.some(isAcceptedBarcode) && !data.verificationCode && options.formats?.includes("EAN13") &&
+          performance.now() < deadline) {
+        const phase = Math.abs(data.regionOffset || 0) % 4;
+        const aimX = Math.floor(pixels.width * .28), aimHeight = Math.ceil(pixels.height * .14);
+        const aimY = Math.max(0, Math.round(pixels.height * [.55, .6, .65, .5][phase] - aimHeight / 2));
+        const aim = { x: aimX, y: aimY, width: pixels.width - aimX * 2,
+          height: Math.min(aimHeight, pixels.height - aimY) };
+        if (frameDiagnostics) frameDiagnostics.stage = "curved-ean-aim";
+        const aimed = readCurvedEanRows(cropBarcodePixels(pixels, aim), Math.min(deadline, performance.now() + 65));
+        if (aimed.length) results = offsetBarcodePositions(aimed, aim);
+      }
+      if (curvedEanEnabled && !results.some(isAcceptedBarcode) && !data.verificationCode && options.formats?.includes("EAN13") &&
+          performance.now() < deadline) {
+        const bandY = Math.floor(pixels.height * .35);
+        const bandX = Math.floor(pixels.width * .24);
+        const band = cropBarcodePixels(pixels, { x: bandX, y: bandY, width: pixels.width - 2 * bandX, height: Math.ceil(pixels.height * .3) });
+        const strips = findBarcodeStrips(band);
+        if (frameDiagnostics) frameDiagnostics.stage = "curved-ean-priority";
+        for (const strip of strips.slice(0, 3)) {
+          if (performance.now() >= deadline) break;
+          const hits = readCurvedEanRows(cropBarcodePixels(band, strip), Math.min(deadline, performance.now() + 42));
+          if (hits.length) { results = offsetBarcodePositions(hits, { x: strip.x + bandX, y: strip.y + bandY }); break; }
+        }
       }
       if (!results.some(isAcceptedBarcode) && !data.verificationCode && !data.verificationRegion &&
           data.thorough !== false &&
@@ -1441,6 +1583,10 @@ self.onmessage = async ({ data }) => {
         if (!results.some(isAcceptedBarcode) && options.formats?.includes("EAN13") && performance.now() < deadline) {
           results = readEanGuardRows(centerBand, Math.min(deadline, performance.now() + 22));
           if (results.length && frameDiagnostics) frameDiagnostics.stage = results[0].repaired ? "erased-ean-bar" : "ean-guard-rows";
+          if (!results.length) {
+            results = readCurvedEanRows(centerBand, Math.min(deadline, performance.now() + 22));
+            if (results.length && frameDiagnostics) frameDiagnostics.stage = "curved-ean-rows";
+          }
           if (!results.length) {
             results = readObliqueEan(centerBand, Math.min(deadline, performance.now() + 30));
             if (results.length && frameDiagnostics) frameDiagnostics.stage = "ean-oblique-rows";
@@ -1729,7 +1875,7 @@ self.onmessage = async ({ data }) => {
       diagnostics.decodedRegion = decodedRegion;
       diagnostics.readsTruncated = diagnostics.wasmCalls > diagnostics.reads.length;
     }
-    self.postMessage({ id: data.id, text, format: result?.format || "", corners, region: decodedRegion, diagnostics });
+    self.postMessage({ id: data.id, text, format: result?.format || "", curved: Boolean(result?.curved), corners, region: decodedRegion, diagnostics });
   } catch (error) {
     if (error === decodeBudgetExhausted) {
       if (frameDiagnostics) frameDiagnostics.preprocessingBudgetExhausted = true;
