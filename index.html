@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f5f6f2" />
-  <meta name="webscanner-version" content="194" />
+  <meta name="webscanner-version" content="195" />
   <script>
     // Keep update discovery independent of the cached application bundle.
     // The worker URL stays stable; its own update checks bypass HTTP caching.
@@ -32,15 +32,15 @@
         navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
       const manifest = document.createElement("link");
       manifest.rel = "manifest";
-      manifest.href = isIOS ? "manifest.ios.webmanifest?v=194" : "manifest.webmanifest?v=194";
+      manifest.href = isIOS ? "manifest.ios.webmanifest?v=195" : "manifest.webmanifest?v=195";
       document.head.appendChild(manifest);
     })();
   </script>
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=194" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=194" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=195" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=195" />
   <title>Web Barcode Scanner</title>
-  <link rel="preload" href="js/app.bundle.js?v=194" as="script" />
-  <link rel="preload" href="css/interface.bundle.css?v=194" as="style" />
+  <link rel="preload" href="js/app.bundle.js?v=195" as="script" />
+  <link rel="preload" href="css/interface.bundle.css?v=195" as="style" />
   <!-- ─── Optimization #6: Critical CSS inlined — zero render-blocking network
        round-trips for the above-the-fold shell (base + scanner + layout +
        essential components). The remaining interface styles load as one small sheet below. -->
@@ -381,13 +381,13 @@
   <!-- These sheets affect the visible page geometry. Keep them render-blocking so
        browsers paint the completed interface once instead of restyling sections
        progressively on a slow connection. -->
-  <link rel="stylesheet" href="css/interface.bundle.css?v=194" />
+  <link rel="stylesheet" href="css/interface.bundle.css?v=195" />
 </head>
 <body>
   <main class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=194" width="34" height="34" alt="" decoding="async" /></span>
+        <span class="brand-icon" aria-hidden="true"><img src="icon-192.png?v=195" width="34" height="34" alt="" decoding="async" /></span>
         <div><h1>Web Scanner</h1></div>
       </div>
       <nav class="app-toolbar" aria-label="App tools"><button class="btn btn-muted floating-action-btn floating-refresh-btn" id="refreshCookieBtn" type="button" aria-label="Refresh login" title="Refresh login">
@@ -537,7 +537,12 @@
         </button>
         <button class="btn btn-muted" id="entryModeBtn" type="button" aria-label="mode: Classic" title="Switch to Quantity mode" aria-pressed="false"><span id="entryModeLabel">mode: Classic</span></button>
         <button class="btn btn-primary" id="scanBtn" type="button" data-mode="start">Capture barcode</button>
+        <div class="desktop-import-actions">
+          <button class="btn btn-primary" id="loadTxtBtn" type="button">Load TXT</button>
+          <button class="btn btn-primary" id="loadErpBtn" type="button">LG ERP uploads</button>
+        </div>
       </nav>
+      <input id="barcodeTxtFile" type="file" accept=".txt,text/plain" hidden />
       <div class="capture-search" id="historySearch" role="search" aria-label="Capture List" hidden>
         <input class="input" id="historySearchInput" type="text" inputmode="search" autocomplete="off" aria-label="Search capture list" aria-controls="historyList" placeholder="Search capture list" />
         <button class="btn btn-muted capture-search-icon" id="historySearchCloseBtn" type="button" aria-label="Close search">
@@ -609,6 +614,21 @@
 
 
   <div class="toast" id="toast" aria-live="polite"></div>
+
+  <div class="dialog-backdrop" id="barcodeImportDialog" aria-hidden="true">
+    <section class="dialog-card barcode-import-card" role="dialog" aria-modal="true" aria-labelledby="barcodeImportTitle" tabindex="-1">
+      <h2 id="barcodeImportTitle">LG ERP uploads</h2>
+      <p>Loaded barcodes are added to your capture list. Your current records are kept.</p>
+      <p id="barcodeImportStatus" role="status" aria-live="polite"></p>
+      <div id="barcodeImportList" class="barcode-import-list"></div>
+      <div class="barcode-import-pages" id="barcodeImportPages" hidden>
+        <button class="btn btn-muted" id="barcodeImportPrevious" type="button">Previous</button>
+        <span id="barcodeImportPageLabel"></span>
+        <button class="btn btn-muted" id="barcodeImportNext" type="button">Next</button>
+      </div>
+      <button class="btn btn-muted" id="barcodeImportClose" type="button">Close</button>
+    </section>
+  </div>
 
   
 
@@ -872,6 +892,6 @@
     <button class="btn btn-primary" id="appUpdateBtn" type="button">Reload</button>
   </div>
   <canvas id="captureCanvas" class="visually-hidden" width="720" height="720"></canvas>
-  <script src="js/app.bundle.js?v=194" defer></script>
+  <script src="js/app.bundle.js?v=195" defer></script>
 </body>
 </html>
