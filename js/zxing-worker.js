@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=199");
+importScripts("capture-frame-worker.js?v=200");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -1217,6 +1217,89 @@ function readFadedCode128Row(row, deadline) {
   return conflict ? null : best;
 }
 
+async function readCode128Label(pixels, options, deadline, enhance = true) {
+  if (performance.now() >= deadline) return [];
+  const readOptions = { ...options, formats: ["Code128"], tryHarder: true,
+    minLineCount: Math.max(4, options.minLineCount || 2), tryInvert: false,
+    tryDownscale: false, binarizer: "LocalAverage" };
+  const accepted = result => isAcceptedBarcode(result) && result.format === "Code128";
+  let results = await readDiagnosticBarcodes(pixels, readOptions);
+  if (results.some(accepted)) {
+    if (frameDiagnostics) frameDiagnostics.code128Evidence = "four-lines";
+    return results.filter(accepted);
+  }
+  if (!enhance || performance.now() >= deadline) return [];
+  // Video colour conversion softens a one-pixel space even when the photo
+  // itself is sharp. A mild horizontal unsharp mask restores edge contrast;
+  // leave every symbol decision and checksum check to the native decoder.
+  const sharpened = new ImageData(pixels.width, pixels.height);
+  const sharpenedTarget = new Uint32Array(sharpened.data.buffer);
+  for (let y = 0; y < pixels.height; y++) {
+    if ((y & 7) === 0) checkDecodeBudget();
+    for (let x = 0; x < pixels.width; x++) {
+      const at = y * pixels.width + x;
+      const center = pixels.data[at * 4 + 1];
+      const left = pixels.data[(at - (x > 0 ? 1 : 0)) * 4 + 1];
+      const right = pixels.data[(at + (x + 1 < pixels.width ? 1 : 0)) * 4 + 1];
+      const value = Math.max(0, Math.min(255, Math.round(2 * center - (left + right) / 2)));
+      sharpenedTarget[at] = value < 192 ? 0xff000000 : 0xffffffff;
+    }
+  }
+  if (performance.now() >= deadline) return [];
+  results = await readDiagnosticBarcodes(sharpened, { ...readOptions, binarizer: "FixedThreshold" });
+  if (results.some(accepted)) {
+    if (frameDiagnostics) frameDiagnostics.code128Evidence = "four-sharpened-lines";
+    return results.filter(accepted);
+  }
+  // Short, skewed bars may offer only two reliable rows. As with the retail
+  // verifier, require the same checksum-valid value in two different real
+  // crop contexts before accepting that weaker individual read. The page
+  // then confirms it independently on the next fresh camera frame.
+  const normalized = normalizeBarcodePixels(pixels, 1);
+  const weakReads = [];
+  if (normalized) {
+    const firstInset = Math.max(2, Math.round(pixels.height * 0.10));
+    const secondInset = Math.max(firstInset + 2, Math.round(pixels.height * 0.20));
+    for (const inset of [firstInset, secondInset]) {
+      if (performance.now() >= deadline) return [];
+      const rect = { x: 0, y: inset, width: pixels.width, height: pixels.height - 2 * inset };
+      if (rect.height < 8) break;
+      const read = await readDiagnosticBarcodes(cropBarcodePixels(normalized, rect),
+        { ...readOptions, minLineCount: 2 });
+      const valid = read.filter(accepted);
+      if (new Set(valid.map(result => result.text)).size > 1) return [];
+      if (valid.length) weakReads.push({ result: valid[0], rect });
+    }
+    if (weakReads.length === 2) {
+      if (weakReads[0].result.text !== weakReads[1].result.text) return [];
+      if (frameDiagnostics) frameDiagnostics.code128Evidence = "two-contexts";
+      return offsetBarcodePositions([weakReads[0].result], weakReads[0].rect);
+    }
+  }
+  // Small printed Code 128 modules can sit between sensor pixels. Enlarge
+  // the measured pixels before trying several ordinary intensity thresholds;
+  // ZXing still has to validate the start/stop symbols, checksum and four rows.
+  const enlarged = rotateBarcodePixels(pixels, 0, 3);
+  const scale = enlarged.width / pixels.width;
+  if (scale <= 1 || performance.now() >= deadline) return [];
+  const binary = new ImageData(enlarged.width, enlarged.height);
+  const target = new Uint32Array(binary.data.buffer);
+  for (const threshold of [128, 160, 96, 192]) {
+    if (performance.now() >= deadline) break;
+    for (let i = 0; i < target.length; i++) {
+      if ((i & 4095) === 0) checkDecodeBudget();
+      target[i] = enlarged.data[i * 4] < threshold ? 0xff000000 : 0xffffffff;
+    }
+    if (performance.now() >= deadline) break;
+    results = await readDiagnosticBarcodes(binary, { ...readOptions, binarizer: "FixedThreshold" });
+    if (results.some(accepted)) {
+      if (frameDiagnostics) frameDiagnostics.code128Evidence = "four-threshold-lines";
+      return restoreRotatedPositions(results.filter(accepted), pixels, enlarged, 0, scale);
+    }
+  }
+  return [];
+}
+
 function readFadedCode128(pixels, panel, deadline, top = 0.55, bottom = 0.91) {
   const votes = new Map();
   const row = new Float32Array(panel.width);
@@ -1537,7 +1620,7 @@ self.onmessage = async ({ data }) => {
     // interrupted, but an expired budget must not start further retries.
     // Direct callers without a budget retain the full fallback behavior.
     const deadline = decodeDeadline = started + (data.budgetMs > 0 ? data.budgetMs : Infinity);
-    let results = [], triedScheduledAngle = false;
+    let results = [], triedScheduledAngle = false, triedFullFrameDense = false;
     const quick = { ...options, tryHarder: false, tryDownscale: false, binarizer: "LocalAverage" };
     const dense = { ...quick, tryHarder: true };
     const preferred = data.preferredRegion;
@@ -1572,6 +1655,14 @@ self.onmessage = async ({ data }) => {
         if (frameDiagnostics) frameDiagnostics.stage = "full-frame-quick";
         results = await readDiagnosticBarcodes(pixels, quick);
       }
+      if (!results.some(isAcceptedBarcode) && !data.verificationCode &&
+          options.formats?.includes("Code128") && data.thorough !== false && performance.now() < deadline) {
+        // A dense standards-based read is much cheaper than EAN curve fitting
+        // and samples short Code 128 labels missed by the fast scan rows.
+        triedFullFrameDense = true;
+        if (frameDiagnostics) frameDiagnostics.stage = "full-frame-dense";
+        results = await readDiagnosticBarcodes(pixels, { ...dense, tryInvert: false });
+      }
       if (!results.some(isAcceptedBarcode) && options.formats?.includes("EAN13") &&
           performance.now() < deadline && data.analogVerification && data.verificationRegion) {
         const region = data.verificationRegion;
@@ -1591,7 +1682,7 @@ self.onmessage = async ({ data }) => {
         }
       }
       if (!results.some(isAcceptedBarcode) && !data.verificationCode &&
-          options.formats?.includes("EAN13") && performance.now() < deadline) {
+          (options.formats?.includes("EAN13") || options.formats?.includes("Code128")) && performance.now() < deadline) {
         // Ignore fine package texture here; retain the sensitive locator later
         // for faint labels. Find and read real bars before costly curve fitting.
         if (frameDiagnostics) frameDiagnostics.stage = "strong-retail-strips";
@@ -1600,10 +1691,20 @@ self.onmessage = async ({ data }) => {
         for (const rect of strips.slice(0, 2)) {
           if (performance.now() >= deadline) break;
           const crop = cropBarcodePixels(pixels, rect);
-          results = await readDiagnosticBarcodes(crop, { ...dense, formats: ["EAN13"],
-            minLineCount: Math.max(4, options.minLineCount), tryInvert: false,
-            tryDownscale: true, binarizer: "FixedThreshold" });
-          if (!results.some(isAcceptedBarcode) && performance.now() < deadline) {
+          // A numeric product value can use Code 128 rather than EAN-13.
+          // Read its native pixels before EAN fitting consumes the frame budget.
+          if (options.formats?.includes("Code128")) {
+            // Reserve the expensive small-module recovery for short strips.
+            // Tall EAN labels must retain time for their own guarded decoder.
+            const enhance = !options.formats.includes("EAN13") || rect.core.height < rect.core.width * 0.35;
+            results = await readCode128Label(crop, dense, Math.min(deadline, performance.now() + 40), enhance);
+          }
+          if (!results.some(isAcceptedBarcode) && options.formats?.includes("EAN13") && performance.now() < deadline) {
+            results = await readDiagnosticBarcodes(crop, { ...dense, formats: ["EAN13"],
+              minLineCount: Math.max(4, options.minLineCount), tryInvert: false,
+              tryDownscale: true, binarizer: "FixedThreshold" });
+          }
+          if (!results.some(isAcceptedBarcode) && options.formats?.includes("EAN13") && performance.now() < deadline) {
             results = readAnalogEanRows(crop, Math.min(deadline, performance.now() + 45));
           }
           if (results.some(isAcceptedBarcode)) {
@@ -1637,7 +1738,7 @@ self.onmessage = async ({ data }) => {
         }
       }
       if (!results.some(isAcceptedBarcode) && !data.verificationCode && !data.verificationRegion &&
-          data.thorough !== false &&
+          !triedFullFrameDense && data.thorough !== false &&
           performance.now() < deadline) {
         // The quick pass samples too few rows for short and reflective labels.
         // Give the native pixels a dense read before expensive angle/crop work.
@@ -1659,13 +1760,15 @@ self.onmessage = async ({ data }) => {
         if (frameDiagnostics) frameDiagnostics.stage = "retail-verification-region";
         if (data.verificationFormat === "Code128" && options.formats?.includes("Code128")) {
           const x = Math.max(0, Math.floor(verification.x - verification.width * 0.25));
-          const y = Math.max(0, Math.floor(verification.y - verification.height * 0.8));
+          // A valid decoder position can describe only one scanline. Keep
+          // enough real rows around it for independent four-line verification.
+          const py = Math.max(24, verification.width * 0.12, verification.height * 0.8);
+          const y = Math.max(0, Math.floor(verification.y - py));
           const width = Math.min(pixels.width, Math.ceil(verification.x + verification.width * 1.25)) - x;
-          const height = Math.min(pixels.height, Math.ceil(verification.y + verification.height * 1.8)) - y;
+          const height = Math.min(pixels.height, Math.ceil(verification.y + verification.height + py)) - y;
           if (width > 0 && height > 0) {
             const rect = { x, y, width, height };
-            const verified = await readDiagnosticBarcodes(cropBarcodePixels(pixels, rect),
-              { ...dense, formats: ["Code128"], minLineCount: 4 });
+            const verified = await readCode128Label(cropBarcodePixels(pixels, rect), dense, deadline);
             const matching = result => isAcceptedBarcode(result) && result.text === data.verificationCode;
             if (verified.some(matching)) results = offsetBarcodePositions(verified.filter(matching), rect);
             else results = readFadedCode128(pixels, rect, Math.min(deadline, performance.now() + 24), 0.15, 0.85)
