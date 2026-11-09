@@ -3,7 +3,7 @@ const decoderStartupStarted = performance.now();
 
 // Keep the wrapper and WASM binary pinned to the same release, served locally.
 importScripts("vendor/zxing-wasm/3.1.5/reader.js");
-importScripts("capture-frame-worker.js?v=200");
+importScripts("capture-frame-worker.js?v=202");
 const ready = ZXingWASM.prepareZXingModule({
   overrides: {
     locateFile: (path) => new URL("vendor/zxing-wasm/3.1.5/" + path, self.location.href).href
@@ -600,7 +600,7 @@ const EAN13_PARITY = ["LLLLLL", "LLGLGG", "LLGGLG", "LLGGGL", "LGLLGG",
 
 const EAN_RUN_PATTERNS = [...EAN13_L, ...EAN13_G].map(pattern => pattern.match(/0+|1+/g).map(run => run.length));
 
-function readCurvedEanRow(bits, y, distances) {
+function readCurvedEanRow(bits, y, distances, shortRightMargin = false) {
   const edges = [0];
   for (let x = 1; x < bits.length; x++) if (bits[x] !== bits[x - 1]) {
     // Interpolate crossings rather than rounding a three-pixel module to
@@ -614,8 +614,10 @@ function readCurvedEanRow(bits, y, distances) {
   for (let start = 1; start < edges.length - 60; start++) {
     if ((bits[0] === 1) !== (start % 2 === 0)) continue;
     const pitch = (edges[start + 59] - edges[start]) / 95;
+    const rightMargin = edges[start + 60] - edges[start + 59];
     if (pitch < 1.4 || edges[start] - edges[start - 1] < 3 * pitch ||
-        edges[start + 60] - edges[start + 59] < 3 * pitch) continue;
+        rightMargin < (shortRightMargin ? 0.65 : 3) * pitch ||
+        (shortRightMargin && (rightMargin >= 3 * pitch || start + 60 === edges.length - 1))) continue;
     const widths = Array.from({ length: 59 }, (_, i) => edges[start + i + 1] - edges[start + i]);
     if ([0, 1, 2, 27, 28, 29, 30, 31, 56, 57, 58].some(i => widths[i] < .2 * pitch || widths[i] > 2.3 * pitch)) continue;
     let digits = "", parity = "", totalCost = 0;
@@ -650,13 +652,15 @@ function readCurvedEanRow(bits, y, distances) {
 
 let curvedEanRowPhase = 0;
 let curvedEanEnabled = true;
-function readCurvedEanRows(pixels, deadline) {
-  if (!curvedEanEnabled) return [];
+function readCurvedEanRows(pixels, deadline, shortRightMargin = false) {
+  if (!curvedEanEnabled && !shortRightMargin) return [];
   const { width, height, data } = pixels;
   const values = new Float32Array(width), low = new Float32Array(width), high = new Float32Array(width);
   const bits = new Uint8Array(width);
   const distances = new Float32Array(width);
-  const step = Math.max(1, Math.floor(height / 96)), middle = Math.floor(height / 2) + Math.floor(curvedEanRowPhase++ / 3) % step;
+  const step = Math.max(shortRightMargin ? 3 : 1, Math.floor(height / 96));
+  const middle = Math.floor(height / 2) + Math.floor(curvedEanRowPhase++ / 3) % step;
+  let firstHit = null, top = height, bottom = 0, rows = 0;
   for (let index = 0; index < Math.ceil(height / step); index++) {
     const y = middle + (index % 2 ? -1 : 1) * Math.ceil(index / 2) * step;
     if (y < 0 || y >= height) continue;
@@ -686,10 +690,26 @@ function readCurvedEanRows(pixels, deadline) {
           distances[x] = values[x] - low[x] - (high[x] - low[x]) * fraction;
           bits[x] = high[x] - low[x] >= 5 && distances[x] < 0 ? 1 : 0;
         }
-        const hit = readCurvedEanRow(bits, y, distances) || readCurvedEanRow(bits, y);
-        if (hit) return [{ isValid: true, text: hit.text, format: "EAN13", curved: true, position: {
-          topLeft: { x: hit.left, y: Math.max(0, y - 2) }, topRight: { x: hit.right, y: Math.max(0, y - 2) },
-          bottomRight: { x: hit.right, y: Math.min(height, y + 2) }, bottomLeft: { x: hit.left, y: Math.min(height, y + 2) }
+        const hit = readCurvedEanRow(bits, y, distances, shortRightMargin) ||
+          readCurvedEanRow(bits, y, undefined, shortRightMargin);
+        if (!hit) continue;
+        if (shortRightMargin) {
+          // Require the same guarded, checksum-valid symbol on four distinct
+          // rows before accepting the reduced margin on a label edge.
+          firstHit ||= hit;
+          const tolerance = (firstHit.right - firstHit.left) * 0.08;
+          if (hit.text !== firstHit.text || Math.abs(hit.left - firstHit.left) > tolerance ||
+              Math.abs(hit.right - firstHit.right) > tolerance) return [];
+          top = Math.min(top, y);
+          bottom = Math.max(bottom, y);
+          if (++rows < 4) break;
+        } else {
+          top = Math.max(0, y - 2);
+          bottom = Math.min(height, y + 2);
+        }
+        return [{ isValid: true, text: hit.text, format: "EAN13", curved: true, position: {
+          topLeft: { x: hit.left, y: top }, topRight: { x: hit.right, y: top },
+          bottomRight: { x: hit.right, y: bottom }, bottomLeft: { x: hit.left, y: bottom }
         } }];
       }
     }
@@ -1387,6 +1407,13 @@ async function verifyRetailRegion(pixels, region, options, deadline, expectedTex
     const crop = cropBarcodePixels(pixels, rect);
     firstCrop ||= { crop, rect };
     if (expectedFormat === "EAN13" && expectedText) {
+      if (curvedEanEnabled) {
+        const shortMargin = readCurvedEanRows(crop, Math.min(deadline, performance.now() + 22), true).filter(matches);
+        if (shortMargin.length) {
+          if (frameDiagnostics) frameDiagnostics.verificationEvidence = "four-short-margin-lines";
+          return offsetBarcodePositions(shortMargin, rect);
+        }
+      }
       const guarded = readEanGuardRows(crop, Math.min(deadline, performance.now() + 12)).filter(matches);
       if (guarded.length) {
         if (frameDiagnostics) frameDiagnostics.verificationEvidence = guarded[0].repaired ? "four-restored-lines" : "four-guard-lines";
@@ -1703,6 +1730,9 @@ self.onmessage = async ({ data }) => {
             results = await readDiagnosticBarcodes(crop, { ...dense, formats: ["EAN13"],
               minLineCount: Math.max(4, options.minLineCount), tryInvert: false,
               tryDownscale: true, binarizer: "FixedThreshold" });
+          }
+          if (!results.some(isAcceptedBarcode) && options.formats?.includes("EAN13") && performance.now() < deadline) {
+            results = readCurvedEanRows(crop, Math.min(deadline, performance.now() + 22), true);
           }
           if (!results.some(isAcceptedBarcode) && options.formats?.includes("EAN13") && performance.now() < deadline) {
             results = readAnalogEanRows(crop, Math.min(deadline, performance.now() + 45));
