@@ -1,0 +1,86 @@
+addEventListener("fetch", event => {
+  event.respondWith(handleRequest(event.request));
+});
+
+async function handleRequest(request) {
+  const corsHeaders = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type"
+  };
+
+  if (request.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  if (request.method !== "POST") {
+    return json({ ok: false, error: "Method not allowed" }, 405, corsHeaders);
+  }
+
+  try {
+    const contentType = request.headers.get("content-type") || "";
+    let barcode = "";
+    let cookie = "";
+
+    if (contentType.includes("application/json")) {
+      const body = await request.json();
+      barcode = String(body.barcode || "").trim();
+      cookie = String(body.cookie || "").trim();
+    } else {
+      const form = await request.formData();
+      barcode = String(form.get("barcode") || "").trim();
+      cookie = String(form.get("cookie") || "").trim();
+    }
+
+    if (!barcode) {
+      return json({ ok: false, error: "Missing barcode" }, 400, corsHeaders);
+    }
+
+    if (!cookie) {
+      return json({ ok: false, error: "Missing cookie" }, 400, corsHeaders);
+    }
+
+    const body = new URLSearchParams();
+    body.set("code", barcode);
+
+    const upstream = await fetch("https://www.lgerp.cc/sale/selectBygoodsCode.do", {
+      method: "POST",
+      headers: {
+        "accept": "*/*",
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "cookie": cookie,
+        "origin": "https://www.lgerp.cc",
+        "referer": "https://www.lgerp.cc/index",
+        "x-requested-with": "XMLHttpRequest",
+        "user-agent": "Mozilla/5.0"
+      },
+      body: body.toString()
+    });
+
+    const text = await upstream.text();
+
+    return new Response(text, {
+      status: upstream.status,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": upstream.headers.get("content-type") || "application/json;charset=UTF-8"
+      }
+    });
+  } catch (error) {
+    return json(
+      { ok: false, error: error instanceof Error ? error.message : "Unknown error" },
+      500,
+      corsHeaders
+    );
+  }
+}
+
+function json(data, status, corsHeaders) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json;charset=UTF-8"
+    }
+  });
+}
